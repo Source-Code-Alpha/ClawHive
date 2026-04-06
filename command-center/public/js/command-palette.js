@@ -1,0 +1,191 @@
+// ══════════════════════════════════════════════════════════════
+//  Command Palette (Ctrl+K / Cmd+K) — #1
+//  Fuzzy search for agents, topics, sessions, and commands.
+// ══════════════════════════════════════════════════════════════
+
+(function () {
+  let paletteOpen = false;
+  let selectedIndex = 0;
+  let items = [];
+
+  const overlay = document.getElementById('palette-overlay');
+  const input = document.getElementById('palette-input');
+  const list = document.getElementById('palette-list');
+
+  if (!overlay || !input || !list) return;
+
+  // ── Open / Close ──────────────────────────────────────────
+  function open() {
+    paletteOpen = true;
+    overlay.classList.add('open');
+    input.value = '';
+    selectedIndex = 0;
+    buildItems();
+    render();
+    input.focus();
+  }
+
+  function close() {
+    paletteOpen = false;
+    overlay.classList.remove('open');
+    input.blur();
+  }
+
+  // ── Build searchable items ────────────────────────────────
+  function buildItems() {
+    items = [];
+
+    // Agents
+    if (typeof agents !== 'undefined') {
+      for (const a of agents) {
+        items.push({
+          type: 'agent',
+          icon: a.emoji || '🤖',
+          label: a.name,
+          hint: a.role,
+          action: () => { close(); onAgentClick(a.id); },
+        });
+        // Topics under each agent
+        for (const t of a.topics || []) {
+          items.push({
+            type: 'topic',
+            icon: '📂',
+            label: `${a.name} → ${t}`,
+            hint: 'topic',
+            action: () => { close(); launchAgent(a.id, t); },
+          });
+        }
+      }
+    }
+
+    // Active sessions
+    if (typeof terminals !== 'undefined') {
+      for (const [sid, entry] of terminals) {
+        items.push({
+          type: 'session',
+          icon: entry.agent?.emoji || '💬',
+          label: `Switch to ${entry.agent?.name || sid}${entry.topic ? ': ' + entry.topic : ''}`,
+          hint: 'active session',
+          action: () => { close(); switchToSession(sid); },
+        });
+      }
+    }
+
+    // Commands
+    items.push(
+      { type: 'command', icon: '🏠', label: 'Go to Dashboard', hint: 'Esc', action: () => { close(); showDashboard(); } },
+      { type: 'command', icon: '🔍', label: 'Focus Search', hint: '/', action: () => { close(); document.getElementById('agent-search')?.focus(); } },
+      { type: 'command', icon: '❓', label: 'Keyboard Shortcuts', hint: '?', action: () => { close(); toggleShortcutsOverlay(); } },
+    );
+
+    // If there's an active session, add kill command
+    if (typeof currentSessionId !== 'undefined' && currentSessionId) {
+      items.push({
+        type: 'command',
+        icon: '⏹',
+        label: 'End Current Session',
+        hint: '',
+        action: () => { close(); killCurrentSession(); },
+      });
+    }
+  }
+
+  // ── Fuzzy filter ──────────────────────────────────────────
+  function fuzzyMatch(query, text) {
+    const q = query.toLowerCase();
+    const t = text.toLowerCase();
+    if (t.includes(q)) return true;
+    // Simple character-by-character fuzzy
+    let qi = 0;
+    for (let i = 0; i < t.length && qi < q.length; i++) {
+      if (t[i] === q[qi]) qi++;
+    }
+    return qi === q.length;
+  }
+
+  function getFiltered() {
+    const q = input.value.trim();
+    if (!q) return items;
+    return items.filter(item => fuzzyMatch(q, item.label) || fuzzyMatch(q, item.hint));
+  }
+
+  // ── Render ────────────────────────────────────────────────
+  function render() {
+    const filtered = getFiltered();
+    selectedIndex = Math.max(0, Math.min(selectedIndex, filtered.length - 1));
+
+    list.innerHTML = '';
+    if (filtered.length === 0) {
+      list.innerHTML = '<div class="palette-empty">No matches</div>';
+      return;
+    }
+
+    filtered.forEach((item, i) => {
+      const el = document.createElement('div');
+      el.className = `palette-item${i === selectedIndex ? ' selected' : ''}`;
+      el.innerHTML = `
+        <span class="palette-icon">${item.icon}</span>
+        <span class="palette-label">${escPalette(item.label)}</span>
+        <span class="palette-hint">${escPalette(item.hint)}</span>
+      `;
+      el.addEventListener('click', () => item.action());
+      el.addEventListener('mouseenter', () => {
+        selectedIndex = i;
+        render();
+      });
+      list.appendChild(el);
+    });
+
+    // Scroll selected into view
+    const selected = list.querySelector('.palette-item.selected');
+    if (selected) selected.scrollIntoView({ block: 'nearest' });
+  }
+
+  function escPalette(str) {
+    const d = document.createElement('div');
+    d.textContent = str;
+    return d.innerHTML;
+  }
+
+  // ── Keyboard ──────────────────────────────────────────────
+  input.addEventListener('input', () => {
+    selectedIndex = 0;
+    render();
+  });
+
+  input.addEventListener('keydown', (e) => {
+    const filtered = getFiltered();
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      selectedIndex = (selectedIndex + 1) % Math.max(1, filtered.length);
+      render();
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      selectedIndex = (selectedIndex - 1 + filtered.length) % Math.max(1, filtered.length);
+      render();
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      if (filtered[selectedIndex]) filtered[selectedIndex].action();
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      close();
+    }
+  });
+
+  // Close on overlay click
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) close();
+  });
+
+  // ── Global shortcut: Ctrl+K / Cmd+K ──────────────────────
+  document.addEventListener('keydown', (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+      e.preventDefault();
+      if (paletteOpen) close(); else open();
+    }
+  });
+
+  // Expose for external use
+  window.openCommandPalette = open;
+  window.closeCommandPalette = close;
+})();

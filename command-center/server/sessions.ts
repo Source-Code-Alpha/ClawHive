@@ -6,13 +6,10 @@ import { WebSocket } from "ws";
 import nodePty from "node-pty";
 const { spawn } = nodePty;
 
-const MAX_SESSIONS = parseInt(process.env.MAX_SESSIONS || "8");
+const MAX_SESSIONS = 8;
 const SCROLLBACK_SIZE = 200 * 1024; // 200KB — enough for reconnect replay
-const HISTORY_DIR = process.env.HISTORY_DIR?.replace(/^~/, os.homedir())
-  || path.join(os.homedir(), ".clawhive", "history");
+const HISTORY_DIR = path.join(os.homedir(), ".clawhive", "history");
 const KEEPALIVE_INTERVAL = 30_000; // 30s WebSocket ping
-const WORKSPACE_PREFIX = process.env.WORKSPACE_PREFIX || "clawd-";
-const CLAUDE_BIN = process.env.CLAUDE_BIN || "claude";
 
 // Ensure history dir exists
 fs.mkdirSync(HISTORY_DIR, { recursive: true });
@@ -43,7 +40,7 @@ function stripAnsi(str: string): string {
 }
 
 function updateCurrentTask(agentId: string, status: "running" | "ended", summary?: string) {
-  const workspace = path.join(os.homedir(), `${WORKSPACE_PREFIX}${agentId}`);
+  const workspace = path.join(os.homedir(), `clawd-${agentId}`);
   const taskFile = path.join(workspace, "CURRENT_TASK.md");
   const now = new Date().toISOString();
 
@@ -54,7 +51,7 @@ function updateCurrentTask(agentId: string, status: "running" | "ended", summary
       `**Agent:** ${agentId}\n\n` +
       `Session is running in the Agent Command Center.\n` +
       `If this session was interrupted, check the history at:\n` +
-      `${HISTORY_DIR}\n\n` +
+      `~/.clawhive/history/\n\n` +
       `## Live Output (last 2000 chars)\n\n` +
       `\`\`\`\n${summary || "(session just started)"}\n\`\`\`\n`;
     try { fs.writeFileSync(taskFile, content, "utf-8"); } catch {}
@@ -87,9 +84,10 @@ export function createSession(
   const activeCount = [...sessions.values()].filter((s) => s.alive).length;
   if (activeCount >= MAX_SESSIONS) return null;
 
-  const workspace = path.join(os.homedir(), `${WORKSPACE_PREFIX}${agentId}`);
+  const workspace = path.join(os.homedir(), `clawd-${agentId}`);
+  const claudeBin = process.env.CLAUDE_BIN || "claude";
 
-  const pty = spawn(CLAUDE_BIN, ["--dangerously-skip-permissions"], {
+  const pty = spawn(claudeBin, ["--dangerously-skip-permissions"], {
     name: "xterm-256color",
     cols,
     rows,
@@ -351,4 +349,38 @@ export function readHistoryFile(filename: string): string | null {
   } catch {
     return null;
   }
+}
+
+// ── Graceful Shutdown (#15) ─────────────────────────────────────
+
+export function shutdownAll(): void {
+  console.log(`[session] Shutting down ${sessions.size} sessions...`);
+  for (const [id, session] of sessions) {
+    // Flush history
+    if (session.historyStream) {
+      session.historyStream.write(`\n\n# Server shutdown: ${new Date().toISOString()}\n`);
+      session.historyStream.end();
+      session.historyStream = null;
+    }
+    // Clear timers
+    if (session.keepaliveTimer) {
+      clearInterval(session.keepaliveTimer);
+      session.keepaliveTimer = null;
+    }
+    // Close WebSocket clients
+    for (const ws of session.clients) {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: "server_shutdown" }));
+        ws.close();
+      }
+    }
+    // Kill PTY
+    if (session.alive) {
+      try { session.pty.kill(); } catch {}
+    }
+    // Clear task file
+    updateCurrentTask(session.agentId, "ended");
+    console.log(`[session] Cleaned up: ${id}`);
+  }
+  sessions.clear();
 }

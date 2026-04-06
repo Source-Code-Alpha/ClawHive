@@ -3,7 +3,7 @@ import http from "http";
 import { WebSocketServer, WebSocket } from "ws";
 import path from "path";
 import { fileURLToPath } from "url";
-import { discoverAgents } from "./agents.js";
+import { discoverAgents, invalidateAgentCache } from "./agents.js";
 import {
   createSession,
   attachClient,
@@ -15,6 +15,7 @@ import {
   getActiveSessionIds,
   getSessionHistory,
   readHistoryFile,
+  shutdownAll,
 } from "./sessions.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -27,6 +28,22 @@ const wss = new WebSocketServer({ noServer: true });
 // Serve static frontend
 app.use(express.static(path.join(__dirname, "../public")));
 app.use(express.json());
+
+// ── Input Validation Helpers (#12) ──────────────────────────────
+
+const VALID_ID = /^[a-zA-Z0-9_-]+$/;
+
+function validateId(val: unknown): string | null {
+  if (typeof val !== "string" || val.length === 0 || val.length > 100) return null;
+  if (!VALID_ID.test(val)) return null;
+  return val;
+}
+
+function clamp(val: unknown, min: number, max: number, fallback: number): number {
+  const n = typeof val === "number" ? val : parseInt(String(val));
+  if (isNaN(n)) return fallback;
+  return Math.max(min, Math.min(max, n));
+}
 
 // ── API Routes ──────────────────────────────────────────────────
 
@@ -44,23 +61,37 @@ app.get("/api/sessions", (_req, res) => {
 });
 
 app.post("/api/sessions", (req, res) => {
-  const { agentId, topic, cols, rows } = req.body;
+  const agentId = validateId(req.body.agentId);
   if (!agentId) {
-    res.status(400).json({ error: "agentId required" });
+    res.status(400).json({ error: "Invalid agentId (alphanumeric, underscore, hyphen only)" });
     return;
   }
 
-  const session = createSession(agentId, topic, cols, rows);
-  if (!session) {
-    res.status(503).json({ error: "Max sessions reached" });
+  const topic = req.body.topic ? validateId(req.body.topic) : undefined;
+  if (req.body.topic && !topic) {
+    res.status(400).json({ error: "Invalid topic (alphanumeric, underscore, hyphen only)" });
     return;
   }
+
+  const cols = clamp(req.body.cols, 10, 500, 120);
+  const rows = clamp(req.body.rows, 5, 200, 30);
+
+  const session = createSession(agentId, topic, cols, rows);
+  if (!session) {
+    const active = [...listSessions()].filter(s => s.alive).length;
+    res.status(503).json({ error: `Max sessions reached (${active}/8)` });
+    return;
+  }
+
+  // Invalidate agent cache so hasActiveSession updates
+  invalidateAgentCache();
 
   res.json({ id: session.id, agentId: session.agentId, topic: session.topic });
 });
 
 app.delete("/api/sessions/:id", (req, res) => {
   killSession(req.params.id);
+  invalidateAgentCache();
   res.json({ ok: true });
 });
 
@@ -114,11 +145,11 @@ function handleTerminalWs(ws: WebSocket, sessionId: string) {
     try {
       const ctrl = JSON.parse(msg);
       if (ctrl.type === "resize" && ctrl.cols && ctrl.rows) {
-        resizeSession(sessionId, ctrl.cols, ctrl.rows);
+        resizeSession(sessionId, clamp(ctrl.cols, 10, 500, 120), clamp(ctrl.rows, 5, 200, 30));
         return;
       }
     } catch {
-      // Not JSON — treat as terminal input
+      // Not JSON -- treat as terminal input
     }
 
     writeToSession(sessionId, msg);
@@ -129,11 +160,29 @@ function handleTerminalWs(ws: WebSocket, sessionId: string) {
   });
 }
 
+// ── Graceful Shutdown (#15) ─────────────────────────────────────
+
+function shutdown(signal: string) {
+  console.log(`\n[server] ${signal} received. Shutting down gracefully...`);
+  shutdownAll();
+  wss.close();
+  server.close(() => {
+    console.log("[server] Closed.");
+    process.exit(0);
+  });
+  // Force exit after 5s if graceful shutdown hangs
+  setTimeout(() => process.exit(1), 5000);
+}
+
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));
+
 // ── Start ───────────────────────────────────────────────────────
 
 server.listen(PORT, "0.0.0.0", () => {
   const agents = discoverAgents();
   console.log(`\n  Agent Command Center`);
+  console.log(`  http://localhost:${PORT}`);
   console.log(`  http://localhost:${PORT}`);
   console.log(`  ${agents.length} agents discovered\n`);
 });

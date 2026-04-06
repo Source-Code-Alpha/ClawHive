@@ -32,7 +32,7 @@
         </div>
         <div class="logo-text-group">
           <h1 class="logo-text">Command Center</h1>
-          <span class="logo-sub">clawhive</span>
+          <span class="logo-sub">ai.nuc</span>
         </div>
       </div>
       <div class="header-center">
@@ -70,20 +70,50 @@
         <div class="agent-card skeleton"><div class="skeleton-emoji"></div><div class="skeleton-line w60"></div><div class="skeleton-line w80"></div></div>
         <div class="agent-card skeleton"><div class="skeleton-emoji"></div><div class="skeleton-line w60"></div><div class="skeleton-line w80"></div></div>
       </div>
+      <!-- Recent Sessions (#8) -->
+      <div id="recent-sessions" class="recent-sessions" style="display:none">
+        <div class="recent-header">
+          <span class="category-label" style="color:var(--text-muted)">Recent Sessions</span>
+          <div class="category-line"></div>
+        </div>
+        <div id="recent-sessions-list" class="recent-list"></div>
+      </div>
       <div id="agent-grid" class="agent-grid" style="display:none"></div>
+    </div>
+
+    <!-- Agent Detail Panel (#3) -->
+    <div id="agent-detail" class="detail-panel">
+      <div class="detail-header">
+        <span id="detail-emoji" class="detail-emoji"></span>
+        <div>
+          <div id="detail-name" class="detail-name"></div>
+          <div id="detail-role" class="detail-role"></div>
+        </div>
+        <button class="detail-close" onclick="closeDetailPanel()">&#215;</button>
+      </div>
+      <div id="detail-vibe" class="detail-vibe"></div>
+      <div class="detail-section">
+        <div class="detail-label">Topics</div>
+        <div id="detail-topics" class="detail-topics"></div>
+      </div>
+      <div class="detail-section">
+        <div class="detail-label">Category</div>
+        <div id="detail-category" class="detail-category-val"></div>
+      </div>
+      <button id="detail-launch" class="detail-launch-btn">Launch Session</button>
     </div>
 
     <!-- Terminal view -->
     <div id="terminal-view" class="view">
       <div class="terminal-header" id="terminal-header-bar">
-        <button class="back-btn" onclick="showDashboard()" title="Back to dashboard (Esc)">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
-        </button>
-        <div class="terminal-agent-info">
-          <span id="terminal-emoji" class="terminal-emoji"></span>
-          <span id="terminal-name" class="terminal-name"></span>
-          <span id="terminal-topic" class="terminal-topic"></span>
-        </div>
+        <!-- Breadcrumbs (#10) -->
+        <nav class="breadcrumbs">
+          <button class="breadcrumb-link" onclick="showDashboard()">Dashboard</button>
+          <span class="breadcrumb-sep">/</span>
+          <span id="breadcrumb-agent" class="breadcrumb-current"></span>
+          <span id="breadcrumb-topic-sep" class="breadcrumb-sep" style="display:none">/</span>
+          <span id="breadcrumb-topic" class="breadcrumb-topic"></span>
+        </nav>
         <button class="kill-btn" onclick="killCurrentSession()" title="End session">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
           End
@@ -108,10 +138,36 @@
     </div>
   </div>
 
+  <!-- Command Palette (#1) -->
+  <div id="palette-overlay" class="palette-overlay">
+    <div class="palette-box">
+      <input id="palette-input" class="palette-input" type="text" placeholder="Search agents, topics, commands..." autocomplete="off" spellcheck="false">
+      <div id="palette-list" class="palette-list"></div>
+    </div>
+  </div>
+
+  <!-- Keyboard Shortcuts Overlay (#9) -->
+  <div id="shortcuts-overlay" class="modal-overlay" onclick="toggleShortcutsOverlay()">
+    <div class="modal-content shortcuts-content" onclick="event.stopPropagation()">
+      <h3>Keyboard Shortcuts</h3>
+      <div class="shortcut-grid">
+        <div class="shortcut-row"><kbd>/</kbd><span>Focus search</span></div>
+        <div class="shortcut-row"><kbd>Ctrl+K</kbd><span>Command palette</span></div>
+        <div class="shortcut-row"><kbd>Esc</kbd><span>Back to dashboard / close</span></div>
+        <div class="shortcut-row"><kbd>Ctrl+1-8</kbd><span>Switch session tabs</span></div>
+        <div class="shortcut-row"><kbd>?</kbd><span>This help</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast container -->
+  <div id="toast-container" class="toast-container"></div>
+
   <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-web-links@0.11.0/lib/addon-web-links.min.js"></script>
   <script src="/js/particles.js"></script>
   <script src="/js/dashboard.js"></script>
+  <script src="/js/command-palette.js"></script>
 </body>
 </html>

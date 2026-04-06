@@ -9,6 +9,16 @@ const SKIP_DIRS = new Set(
   process.env.SKIP_DIRS?.split(",").filter(Boolean) || []
 );
 
+// Agent Discovery Cache
+let cachedAgents: Agent[] | null = null;
+let cacheTime = 0;
+const CACHE_TTL = 30_000;
+
+export function invalidateAgentCache(): void {
+  cachedAgents = null;
+  cacheTime = 0;
+}
+
 function parseIdentityMd(filePath: string): Partial<Agent> {
   try {
     const content = fs.readFileSync(filePath, "utf-8");
@@ -24,6 +34,10 @@ function parseIdentityMd(filePath: string): Partial<Agent> {
         result.vibe = stripped.slice(5).trim();
       } else if (stripped.startsWith("Role:")) {
         result.role = stripped.slice(5).trim().split("\n")[0];
+      } else if (stripped.startsWith("Category:") || stripped.startsWith("category:")) {
+        result.category = stripped.slice(9).trim().toLowerCase();
+      } else if (stripped.startsWith("Color:") || stripped.startsWith("color:")) {
+        result.color = stripped.slice(6).trim();
       }
     }
     return result;
@@ -46,6 +60,10 @@ function getTopics(workspace: string): string[] {
 }
 
 export function discoverAgents(): Agent[] {
+  if (cachedAgents && Date.now() - cacheTime < CACHE_TTL) {
+    return cachedAgents;
+  }
+
   const agents: Agent[] = [];
 
   for (const entry of fs.readdirSync(HOME, { withFileTypes: true })) {
@@ -66,11 +84,15 @@ export function discoverAgents(): Agent[] {
       emoji: identity.emoji || "🤖",
       vibe: identity.vibe || "",
       role: identity.role || "",
+      category: identity.category || "",
+      color: identity.color || "",
       workspace,
       topics: getTopics(workspace),
       hasActiveSession: false,
     });
   }
 
-  return agents.sort((a, b) => a.name.localeCompare(b.name));
+  cachedAgents = agents.sort((a, b) => a.name.localeCompare(b.name));
+  cacheTime = Date.now();
+  return cachedAgents;
 }

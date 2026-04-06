@@ -1,11 +1,20 @@
-// Subtle floating particle dots — mission control aesthetic
+// Subtle floating particle dots -- mission control aesthetic
+// Respects prefers-reduced-motion (#18)
 (function() {
   const canvas = document.getElementById('particles');
   if (!canvas) return;
+
+  // Skip entirely if user prefers reduced motion
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    canvas.style.display = 'none';
+    return;
+  }
+
   const ctx = canvas.getContext('2d');
   let w, h;
   const particles = [];
   const COUNT = 40;
+  let running = true;
 
   function resize() {
     w = canvas.width = window.innerWidth;
@@ -28,6 +37,7 @@
   }
 
   function draw() {
+    if (!running) return;
     ctx.clearRect(0, 0, w, h);
     for (const p of particles) {
       p.x += p.dx;
@@ -47,6 +57,16 @@
     }
     requestAnimationFrame(draw);
   }
+
+  // Pause when tab is hidden (save battery)
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+      running = false;
+    } else {
+      running = true;
+      requestAnimationFrame(draw);
+    }
+  });
 
   window.addEventListener('resize', resize);
   init();

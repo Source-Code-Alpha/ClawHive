@@ -4,6 +4,8 @@ export interface Agent {
   emoji: string;
   vibe: string;
   role: string;
+  category: string;
+  color: string;
   workspace: string;
   topics: string[];
   hasActiveSession: boolean;

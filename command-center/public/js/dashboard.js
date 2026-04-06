@@ -9,6 +9,17 @@ let currentSessionId = null;
 let selectedAgentId = null;
 let currentFilter = 'all';
 
+// ── XSS Protection (#11) ────────────────────────────────────────
+function esc(str) {
+  const d = document.createElement('div');
+  d.textContent = str;
+  return d.innerHTML;
+}
+
+function escAttr(str) {
+  return str.replace(/[&"'<>]/g, c => ({ '&': '&amp;', '"': '&quot;', "'": '&#39;', '<': '&lt;', '>': '&gt;' }[c]));
+}
+
 // ── Agent categories and accent colors ────────────────────────
 const agentCategories = {
   coding:      'engineering',
@@ -50,6 +61,12 @@ const agentAccentColors = {
   finance:     '#ff6d00',
 };
 
+// ── Category helper — prefer server-provided, fallback to hardcoded (#16) ──
+function getCategory(agent) {
+  if (agent.category) return agent.category;
+  return agentCategories[agent.id] || 'personal';
+}
+
 // ── Init ───────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
   loadAgents();
@@ -57,8 +74,37 @@ document.addEventListener('DOMContentLoaded', () => {
   setupKeyboard();
   setupFilterChips();
   setupCursorGlow();
+  setupGridClicks();
+  loadRecentSessions();
   document.getElementById('agent-search').addEventListener('input', filterAgents);
 });
+
+// ── Delegated click handler for agent grid (#11 XSS fix) ────────
+function setupGridClicks() {
+  const grid = document.getElementById('agent-grid');
+
+  grid.addEventListener('click', (e) => {
+    // Quick-launch topic chip (#4)
+    const chip = e.target.closest('.topic-chip[data-topic]');
+    if (chip) {
+      e.stopPropagation();
+      launchAgent(chip.dataset.agent, chip.dataset.topic);
+      return;
+    }
+    // Agent card click
+    const card = e.target.closest('.agent-card[data-agent]');
+    if (card) onAgentClick(card.dataset.agent);
+  });
+
+  // Long-press / double-click opens detail panel (#3)
+  grid.addEventListener('dblclick', (e) => {
+    const card = e.target.closest('.agent-card[data-agent]');
+    if (card) {
+      e.preventDefault();
+      showDetailPanel(card.dataset.agent);
+    }
+  });
+}
 
 // ── Cursor glow on agent cards ──────────────────────────────────
 function setupCursorGlow() {
@@ -95,6 +141,11 @@ function setupKeyboard() {
         e.preventDefault();
         switchToSession(sessionIds[idx]);
       }
+    }
+    // '?' opens keyboard shortcuts overlay (#9)
+    if (e.key === '?' && document.activeElement.tagName !== 'INPUT') {
+      e.preventDefault();
+      toggleShortcutsOverlay();
     }
   });
 }
@@ -156,63 +207,82 @@ function filterAgents(e) {
 function renderAgentGrid(agentList) {
   const grid = document.getElementById('agent-grid');
 
-  // Apply category filter
+  // Apply category filter — use server-provided category (#16), fallback to hardcoded
   let filtered = agentList;
   if (currentFilter === 'active') {
     filtered = agentList.filter(a => a.hasActiveSession);
   } else if (currentFilter !== 'all') {
-    filtered = agentList.filter(a => (agentCategories[a.id] || 'personal') === currentFilter);
+    filtered = agentList.filter(a => getCategory(a) === currentFilter);
   }
 
   // Group by category
   const groups = {};
   for (const cat of categoryOrder) groups[cat] = [];
   for (const agent of filtered) {
-    const cat = agentCategories[agent.id] || 'personal';
+    const cat = getCategory(agent);
     if (!groups[cat]) groups[cat] = [];
     groups[cat].push(agent);
   }
 
   let html = '';
+  let totalRendered = 0;
   for (const cat of categoryOrder) {
     const group = groups[cat];
     if (!group || group.length === 0) continue;
 
-    const catColor = categoryColors[cat];
+    const catColor = categoryColors[cat] || '#7c4dff';
 
     // Category header
     html += `
       <div class="category-header">
-        <span class="category-label" style="color:${catColor}">${categoryLabels[cat]}</span>
-        <div class="category-line" style="background:linear-gradient(to right, ${catColor}30, transparent)"></div>
+        <span class="category-label" style="color:${escAttr(catColor)}">${esc(categoryLabels[cat] || cat)}</span>
+        <div class="category-line" style="background:linear-gradient(to right, ${escAttr(catColor)}30, transparent)"></div>
       </div>
     `;
 
     // Agent cards
     for (const agent of group) {
-      const accent = agentAccentColors[agent.id] || catColor;
+      const accent = agent.color || agentAccentColors[agent.id] || catColor;
       const topicChips = agent.topics.slice(0, 3).map(t =>
-        `<span class="topic-chip">${t}</span>`
+        `<span class="topic-chip" data-topic="${escAttr(t)}" data-agent="${escAttr(agent.id)}">${esc(t)}</span>`
       ).join('');
       const moreTopics = agent.topics.length > 3
         ? `<span class="topic-chip">+${agent.topics.length - 3}</span>` : '';
 
       html += `
         <div class="agent-card ${agent.hasActiveSession ? 'has-session' : ''}"
-             style="--card-accent:${accent}; --card-glow:${accent}30"
-             onclick="onAgentClick('${agent.id}')" data-agent="${agent.id}">
+             style="--card-accent:${escAttr(accent)}; --card-glow:${escAttr(accent)}30"
+             data-agent="${escAttr(agent.id)}">
           <div class="card-top">
-            <span class="agent-emoji">${agent.emoji}</span>
+            <span class="agent-emoji">${esc(agent.emoji)}</span>
             <div class="status-indicator ${agent.hasActiveSession ? 'active' : ''}"></div>
           </div>
           <div class="card-body">
-            <div class="agent-name">${agent.name}</div>
-            <div class="agent-role">${agent.role}</div>
-            ${agent.vibe ? `<div class="agent-vibe">${agent.vibe}</div>` : ''}
+            <div class="agent-name">${esc(agent.name)}</div>
+            <div class="agent-role">${esc(agent.role)}</div>
+            ${agent.vibe ? `<div class="agent-vibe">${esc(agent.vibe)}</div>` : ''}
             ${agent.topics.length > 0 ? `<div class="agent-topics">${topicChips}${moreTopics}</div>` : ''}
           </div>
         </div>
       `;
+      totalRendered++;
+    }
+  }
+
+  // Empty state (#5)
+  if (totalRendered === 0) {
+    if (agentList.length === 0) {
+      html = `<div class="empty-state">
+        <div class="empty-icon">🔍</div>
+        <div class="empty-title">No agents found</div>
+        <div class="empty-text">Check that agent workspaces exist at ~/clawd-*/IDENTITY.md</div>
+      </div>`;
+    } else {
+      html = `<div class="empty-state">
+        <div class="empty-icon">🫥</div>
+        <div class="empty-title">No matching agents</div>
+        <div class="empty-text">Try a different filter or search term</div>
+      </div>`;
     }
   }
 
@@ -235,9 +305,14 @@ function showTopicModal(agent) {
   selectedAgentId = agent.id;
   document.getElementById('topic-modal-title').textContent = `${agent.emoji} ${agent.name}`;
   const list = document.getElementById('topic-list');
-  list.innerHTML = agent.topics.map(t =>
-    `<button class="topic-btn" onclick="launchAgent('${agent.id}', '${t}')">${t}</button>`
-  ).join('');
+  list.innerHTML = '';
+  for (const t of agent.topics) {
+    const btn = document.createElement('button');
+    btn.className = 'topic-btn';
+    btn.textContent = t;
+    btn.addEventListener('click', () => launchAgent(agent.id, t));
+    list.appendChild(btn);
+  }
   document.getElementById('topic-modal').classList.add('open');
 }
 
@@ -264,13 +339,15 @@ async function launchAgent(agentId, topic) {
 
     if (!res.ok) {
       const err = await res.json();
-      alert(err.error || 'Failed to create session');
+      showToast(err.error || 'Failed to create session', 'error');
       return;
     }
 
     const data = await res.json();
     createTerminal(data.id, agentId, topic);
     switchToSession(data.id);
+    const agent = agents.find(a => a.id === agentId);
+    showToast(`${agent?.emoji || '🤖'} ${agent?.name || agentId} started${topic ? ` (${topic})` : ''}`, 'success');
   } catch (err) {
     console.error('Failed to launch agent:', err);
   }
@@ -332,8 +409,15 @@ function createTerminal(sessionId, agentId, topic) {
       try {
         const ctrl = JSON.parse(e.data);
         if (ctrl.type === 'session_ended') return;
+        if (ctrl.type === 'server_shutdown') {
+          showToast('Server shutting down...', 'warning');
+          return;
+        }
       } catch {}
       terminal.write(e.data);
+      // Track last data time for status indicator (#6)
+      const entry = terminals.get(sessionId);
+      if (entry) entry.lastDataTime = Date.now();
     };
 
     ws.onclose = () => {
@@ -368,6 +452,7 @@ function createTerminal(sessionId, agentId, topic) {
 
   terminals.set(sessionId, {
     terminal, fitAddon, ws, agent, topic, resizeObserver, accent,
+    lastDataTime: Date.now(),
     intentionallyClosed: () => { intentionallyClosed = true; },
     clearReconnect: () => { if (reconnectTimer) clearTimeout(reconnectTimer); },
   });
@@ -383,11 +468,18 @@ function switchToSession(sessionId) {
 
   currentSessionId = sessionId;
 
-  document.getElementById('terminal-emoji').textContent = entry.agent.emoji;
-  document.getElementById('terminal-name').textContent = entry.agent.name;
-  const topicEl = document.getElementById('terminal-topic');
-  topicEl.textContent = entry.topic || '';
-  topicEl.style.display = entry.topic ? 'inline' : 'none';
+  // Breadcrumbs (#10)
+  document.getElementById('breadcrumb-agent').textContent = `${entry.agent.emoji} ${entry.agent.name}`;
+  const topicSep = document.getElementById('breadcrumb-topic-sep');
+  const topicBc = document.getElementById('breadcrumb-topic');
+  if (entry.topic) {
+    topicSep.style.display = '';
+    topicBc.style.display = '';
+    topicBc.textContent = entry.topic;
+  } else {
+    topicSep.style.display = 'none';
+    topicBc.style.display = 'none';
+  }
 
   // Set accent color on terminal header
   const accent = entry.accent || '#7c4dff';
@@ -414,19 +506,147 @@ function addSessionTab(sessionId, agent, topic, accent) {
   const tab = document.createElement('button');
   tab.className = 'session-tab';
   tab.dataset.session = sessionId;
+  tab.dataset.startTime = Date.now();
   if (accent) tab.style.borderLeftColor = accent;
-  tab.innerHTML = `
-    <span class="tab-emoji">${agent.emoji}</span>
-    <span>${agent.name}${topic ? `: ${topic}` : ''}</span>
-    <button class="tab-close" onclick="event.stopPropagation(); closeSession('${sessionId}')">&#215;</button>
-  `;
+
+  // Status dot (#6) + emoji + name + timer (#7) + close button
+  const statusDot = document.createElement('span');
+  statusDot.className = 'tab-status active';
+  tab.appendChild(statusDot);
+
+  const emojiSpan = document.createElement('span');
+  emojiSpan.className = 'tab-emoji';
+  emojiSpan.textContent = agent.emoji;
+  tab.appendChild(emojiSpan);
+
+  const nameSpan = document.createElement('span');
+  nameSpan.textContent = agent.name + (topic ? `: ${topic}` : '');
+  tab.appendChild(nameSpan);
+
+  const timerSpan = document.createElement('span');
+  timerSpan.className = 'tab-timer';
+  timerSpan.textContent = '0m';
+  tab.appendChild(timerSpan);
+
+  const closeBtn = document.createElement('button');
+  closeBtn.className = 'tab-close';
+  closeBtn.innerHTML = '&#215;';
+  closeBtn.addEventListener('click', (e) => { e.stopPropagation(); closeSession(sessionId); });
+  tab.appendChild(closeBtn);
+
   tab.addEventListener('click', () => switchToSession(sessionId));
   tabs.appendChild(tab);
 }
 
 function removeSessionTab(sessionId) {
-  const tab = document.querySelector(`.session-tab[data-session="${sessionId}"]`);
+  const tab = document.querySelector(`.session-tab[data-session="${CSS.escape(sessionId)}"]`);
   if (tab) tab.remove();
+}
+
+// ── Session Timer Update (#7) — runs every 30s ──────────────────
+setInterval(() => {
+  document.querySelectorAll('.session-tab').forEach(tab => {
+    const start = parseInt(tab.dataset.startTime);
+    if (!start) return;
+    const mins = Math.floor((Date.now() - start) / 60000);
+    const timer = tab.querySelector('.tab-timer');
+    if (timer) timer.textContent = mins < 60 ? `${mins}m` : `${Math.floor(mins / 60)}h${mins % 60}m`;
+  });
+}, 30000);
+
+// ── Session Status Update (#6) — check I/O activity ─────────────
+setInterval(() => {
+  for (const [sid, entry] of terminals) {
+    const tab = document.querySelector(`.session-tab[data-session="${CSS.escape(sid)}"]`);
+    if (!tab) continue;
+    const dot = tab.querySelector('.tab-status');
+    if (!dot) continue;
+    if (!entry.ws || entry.ws.readyState !== WebSocket.OPEN) {
+      dot.className = 'tab-status disconnected';
+    } else if (entry.lastDataTime && Date.now() - entry.lastDataTime < 30000) {
+      dot.className = 'tab-status active';
+    } else {
+      dot.className = 'tab-status idle';
+    }
+  }
+}, 5000);
+
+// ── Shortcuts Overlay (#9) ──────────────────────────────────────
+function toggleShortcutsOverlay() {
+  const overlay = document.getElementById('shortcuts-overlay');
+  overlay.classList.toggle('open');
+}
+
+// ── Agent Detail Panel (#3) ─────────────────────────────────────
+function showDetailPanel(agentId) {
+  const agent = agents.find(a => a.id === agentId);
+  if (!agent) return;
+
+  document.getElementById('detail-emoji').textContent = agent.emoji;
+  document.getElementById('detail-name').textContent = agent.name;
+  document.getElementById('detail-role').textContent = agent.role;
+  document.getElementById('detail-vibe').textContent = agent.vibe || '';
+
+  const cat = getCategory(agent);
+  document.getElementById('detail-category').textContent = categoryLabels[cat] || cat || 'Uncategorized';
+
+  // Topics
+  const topicsEl = document.getElementById('detail-topics');
+  topicsEl.innerHTML = '';
+  if (agent.topics.length === 0) {
+    topicsEl.innerHTML = '<span style="color:var(--text-dim);font-size:12px">No topics</span>';
+  } else {
+    for (const t of agent.topics) {
+      const chip = document.createElement('span');
+      chip.className = 'detail-topic-chip';
+      chip.textContent = t;
+      chip.addEventListener('click', () => { closeDetailPanel(); launchAgent(agent.id, t); });
+      topicsEl.appendChild(chip);
+    }
+  }
+
+  // Launch button
+  const launchBtn = document.getElementById('detail-launch');
+  launchBtn.onclick = () => { closeDetailPanel(); launchAgent(agent.id); };
+
+  document.getElementById('agent-detail').classList.add('open');
+}
+
+function closeDetailPanel() {
+  document.getElementById('agent-detail').classList.remove('open');
+}
+
+// ── Recent Sessions (#8) ────────────────────────────────────────
+async function loadRecentSessions() {
+  try {
+    const res = await fetch('/api/history');
+    const history = await res.json();
+    const recent = history.slice(0, 5);
+    const container = document.getElementById('recent-sessions');
+    const list = document.getElementById('recent-sessions-list');
+
+    if (recent.length === 0) {
+      container.style.display = 'none';
+      return;
+    }
+
+    container.style.display = '';
+    list.innerHTML = '';
+    for (const h of recent) {
+      const agent = agents.find(a => a.id === h.agentId);
+      const item = document.createElement('div');
+      item.className = 'recent-item';
+      item.innerHTML = `
+        <span class="recent-emoji">${esc(agent?.emoji || '🤖')}</span>
+        <span>${esc(agent?.name || h.agentId)}${h.topic ? ': ' + esc(h.topic) : ''}</span>
+        <span class="recent-time">${esc(h.date.slice(0, 10))}</span>
+      `;
+      item.addEventListener('click', () => launchAgent(h.agentId, h.topic));
+      list.appendChild(item);
+    }
+  } catch {
+    // Silently fail
+  }
 }
 
 // ── Navigation ─────────────────────────────────────────────────
@@ -439,9 +659,11 @@ function showDashboard() {
   document.getElementById('terminal-view').classList.remove('active');
   document.getElementById('dashboard-view').classList.add('active');
   currentSessionId = null;
+  closeDetailPanel();
 
   document.querySelectorAll('.session-tab').forEach(tab => tab.classList.remove('active'));
   loadAgents();
+  loadRecentSessions();
 }
 
 // ── Close Session ──────────────────────────────────────────────
@@ -459,6 +681,7 @@ async function closeSession(sessionId) {
   await fetch(`/api/sessions/${encodeURIComponent(sessionId)}`, { method: 'DELETE' });
   removeSessionTab(sessionId);
   updateSessionCount();
+  showToast(`Session ended`, 'info');
 
   if (currentSessionId === sessionId) {
     const remaining = [...terminals.keys()];
@@ -478,4 +701,120 @@ function killCurrentSession() {
 // ── Session Counter ────────────────────────────────────────────
 function updateSessionCount() {
   document.getElementById('session-count').textContent = terminals.size;
+  updateFaviconBadge(terminals.size);
+}
+
+// ── Toast Notifications (#2) ────────────────────────────────────
+function showToast(message, type = 'info') {
+  const container = document.getElementById('toast-container');
+  const toast = document.createElement('div');
+  toast.className = `toast toast-${type}`;
+  toast.textContent = message;
+  container.appendChild(toast);
+  setTimeout(() => {
+    toast.classList.add('toast-out');
+    setTimeout(() => toast.remove(), 300);
+  }, 4000);
+}
+
+// ── Context Menu (#20) ──────────────────────────────────────────
+let activeContextMenu = null;
+
+function showContextMenu(x, y, agentId) {
+  closeContextMenu();
+  const agent = agents.find(a => a.id === agentId);
+  if (!agent) return;
+
+  const menu = document.createElement('div');
+  menu.className = 'context-menu';
+  menu.style.left = Math.min(x, window.innerWidth - 200) + 'px';
+  menu.style.top = Math.min(y, window.innerHeight - 200) + 'px';
+
+  const items = [
+    { icon: '▶', label: 'Launch Session', action: () => launchAgent(agentId) },
+  ];
+
+  if (agent.topics.length > 0) {
+    items.push({ icon: '📂', label: 'Launch with Topic...', action: () => showTopicModal(agent) });
+  }
+
+  items.push(
+    { icon: 'ℹ', label: 'View Details', action: () => showDetailPanel(agentId) },
+    { sep: true },
+    { icon: '📋', label: 'Copy workspace path', action: () => { navigator.clipboard?.writeText(`cd ~/clawd-${agentId}`); showToast('Path copied', 'info'); } },
+  );
+
+  for (const item of items) {
+    if (item.sep) {
+      const sep = document.createElement('div');
+      sep.className = 'context-sep';
+      menu.appendChild(sep);
+      continue;
+    }
+    const btn = document.createElement('button');
+    btn.className = 'context-item';
+    btn.innerHTML = `<span class="context-icon">${item.icon}</span>${esc(item.label)}`;
+    btn.addEventListener('click', () => { closeContextMenu(); item.action(); });
+    menu.appendChild(btn);
+  }
+
+  document.body.appendChild(menu);
+  activeContextMenu = menu;
+}
+
+function closeContextMenu() {
+  if (activeContextMenu) {
+    activeContextMenu.remove();
+    activeContextMenu = null;
+  }
+}
+
+// Wire context menu to agent grid
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('agent-grid')?.addEventListener('contextmenu', (e) => {
+    const card = e.target.closest('.agent-card[data-agent]');
+    if (card) {
+      e.preventDefault();
+      showContextMenu(e.clientX, e.clientY, card.dataset.agent);
+    }
+  });
+
+  document.addEventListener('click', closeContextMenu);
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeContextMenu(); });
+});
+
+// ── Favicon Badge (#19) ─────────────────────────────────────────
+function updateFaviconBadge(count) {
+  const link = document.querySelector('link[rel="icon"]');
+  if (!link) return;
+  if (count === 0) {
+    link.href = '/favicon.svg';
+    return;
+  }
+  const canvas = document.createElement('canvas');
+  canvas.width = 64;
+  canvas.height = 64;
+  const ctx = canvas.getContext('2d');
+  // Draw base icon
+  ctx.fillStyle = '#06060f';
+  ctx.beginPath();
+  ctx.arc(32, 32, 30, 0, Math.PI * 2);
+  ctx.fill();
+  const grad = ctx.createLinearGradient(0, 0, 64, 64);
+  grad.addColorStop(0, '#7c4dff');
+  grad.addColorStop(1, '#00d4ff');
+  ctx.strokeStyle = grad;
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  // Draw badge
+  ctx.fillStyle = '#00e676';
+  ctx.beginPath();
+  ctx.arc(52, 12, 12, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#000';
+  ctx.font = 'bold 14px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(String(count), 52, 13);
+  link.href = canvas.toDataURL();
 }
