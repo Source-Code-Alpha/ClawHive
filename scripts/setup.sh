@@ -93,13 +93,12 @@ fi
 # --- Install command center ---
 echo ""
 echo "[5/6] Setting up Command Center..."
-CC_DIR="$HOME_DIR/${PREFIX}soha_coding/agent-command-center"
+CC_DIR="$HOME_DIR/clawhive-command-center"
 if [ -d "$REPO_DIR/command-center" ]; then
-  # If coding agent doesn't exist, install to home
-  if [ ! -d "$HOME_DIR/${PREFIX}coding" ] && [ ! -d "$CC_DIR" ]; then
-    CC_DIR="$HOME_DIR/clawhive-command-center"
+  # Use coding agent workspace if it exists, otherwise standalone
+  if [ -d "$HOME_DIR/${PREFIX}coding" ]; then
+    CC_DIR="$HOME_DIR/${PREFIX}coding/command-center"
   fi
-
   mkdir -p "$CC_DIR"
   cp -r "$REPO_DIR/command-center"/* "$CC_DIR/"
   cd "$CC_DIR" && npm install --silent 2>/dev/null

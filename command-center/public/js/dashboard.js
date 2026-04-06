@@ -11,31 +11,14 @@ let currentFilter = 'all';
 
 // ── Agent categories and accent colors ────────────────────────
 const agentCategories = {
-  soha_coding:     'engineering',
-  dba_scholar:     'engineering',
-  soha_rd:         'engineering',
-  chimi_ops:       'operations',
-  plant_ops:       'operations',
-  soha_ops:        'operations',
-  community:       'operations',
-  soha_finance:    'operations',
-  ankh_social:     'social',
-  guidewave_social:'social',
-  soha_social:     'social',
-  soha_collab:     'social',
-  soha_researcher: 'research',
-  atlas:           'research',
-  idea_forge:      'research',
-  reco:            'research',
-  crypto_trader:   'research',
-  alfa_signal:     'research',
-  personal:        'personal',
-  soha_life:       'personal',
-  soha_inbox:      'personal',
-  soha_prompter:   'personal',
-  the_doctor:      'personal',
-  aurelia:         'personal',
-  aurelia_mentor:  'personal',
+  coding:      'engineering',
+  auditor:     'engineering',
+  researcher:  'research',
+  prompter:    'research',
+  social:      'social',
+  designer:    'social',
+  life:        'personal',
+  finance:     'operations',
 };
 
 const categoryColors = {
@@ -57,15 +40,14 @@ const categoryLabels = {
 };
 
 const agentAccentColors = {
-  soha_coding: '#7c4dff', atlas: '#0891b2', plant_ops: '#16a34a',
-  chimi_ops: '#ff6d00', crypto_trader: '#ca8a04', ankh_social: '#d4af37',
-  soha_rd: '#00bcd4', soha_researcher: '#059669', guidewave_social: '#ec4899',
-  soha_social: '#f472b6', soha_prompter: '#f59e0b', dba_scholar: '#818cf8',
-  the_doctor: '#22c55e', reco: '#3b82f6', aurelia: '#a855f7',
-  aurelia_mentor: '#c084fc', alfa_signal: '#14b8a6', idea_forge: '#fb923c',
-  soha_finance: '#eab308', personal: '#8b5cf6', community: '#ef4444',
-  soha_life: '#34d399', soha_inbox: '#60a5fa', soha_ops: '#f97316',
-  soha_collab: '#f472b6',
+  coding:      '#7c4dff',
+  researcher:  '#00bcd4',
+  social:      '#ec4899',
+  life:        '#00e676',
+  prompter:    '#f59e0b',
+  designer:    '#a855f7',
+  auditor:     '#22c55e',
+  finance:     '#ff6d00',
 };
 
 // ── Init ───────────────────────────────────────────────────────
