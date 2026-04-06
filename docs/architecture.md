@@ -34,6 +34,9 @@ graph TB
     PTY -->|runs claude CLI| Claude["Claude Code"]
     Claude -->|reads| A1
 
+    CC -->|"GET /api/health"| Health["Health Check<br/>Uptime, Memory, Sessions, Agents"]
+    CC -->|"GET /api/agents (30s cache)"| Cache["Agent Cache<br/>(TTL invalidated on session change)"]
+
     A1 --> Shared
     A2 --> Shared
     A3 --> Shared
@@ -48,6 +51,8 @@ graph TB
     style CC fill:#00d4ff,color:#000,stroke:#00d4ff
     style Dispatcher fill:#ff6d00,color:#fff,stroke:#ff6d00
     style Shared fill:#1a1a2e,color:#fff,stroke:#444
+    style Health fill:#00e676,color:#000,stroke:#00e676
+    style Cache fill:#e040fb,color:#fff,stroke:#e040fb
 ```
 
 ### How It Works
@@ -62,7 +67,7 @@ graph TB
 There are two ways to interact with agents:
 
 - **Terminal (direct):** `cd ~/clawd-coding && claude` -- Claude reads the local `CLAUDE.md` and boots as that agent.
-- **Command Center (web):** The dashboard spawns a PTY process running `claude` inside the agent's workspace, streamed to the browser via WebSocket.
+- **Command Center (web):** The dashboard spawns a PTY process running `claude` inside the agent's workspace, streamed to the browser via WebSocket. An optional **initial prompt** can be sent after a 3-second boot delay, allowing unattended task execution.
 
 ---
 
@@ -73,7 +78,7 @@ Every agent is defined by **six markdown files** plus a memory file. No code. No
 ```mermaid
 graph TD
     WS["clawd-{agent}/"] --> CLAUDE["CLAUDE.md<br/><i>Boot sequence</i>"]
-    WS --> IDENTITY["IDENTITY.md<br/><i>Name, emoji, role</i>"]
+    WS --> IDENTITY["IDENTITY.md<br/><i>Name, emoji, role,<br/>category, color</i>"]
     WS --> SOUL["SOUL.md<br/><i>Personality & values</i>"]
     WS --> AGENTS["AGENTS.md<br/><i>SOPs & procedures</i>"]
     WS --> USER["USER.md<br/><i>About the human</i>"]
@@ -103,12 +108,21 @@ graph TD
 | File | Purpose | Who Writes It |
 |------|---------|---------------|
 | **CLAUDE.md** | Boot sequence -- tells Claude which files to read and in what order. Includes session end protocol and universal rules. This is the entry point. | Template (rarely edited) |
-| **IDENTITY.md** | The agent's name, emoji, role title, vibe keywords, and core competencies. This is the "business card" -- it defines *who* the agent is. Also parsed by the Command Center for agent discovery. | You, once |
+| **IDENTITY.md** | The agent's name, emoji, role title, vibe keywords, and core competencies. Also includes optional `Category:` and `Color:` fields parsed by the Command Center for dynamic filtering and accent styling. This is the "business card" -- it defines *who* the agent is. | You, once |
 | **SOUL.md** | Personality, communication style, values, strengths, and anti-patterns. This is the file that makes agents *feel different* from each other. A research agent's SOUL.md emphasizes thoroughness and skepticism; a coding agent's emphasizes pragmatism and shipping. | You, once (agent can evolve it) |
 | **AGENTS.md** | The operating manual. Standard operating procedures, responsibilities, memory strategy, workflow conventions, file structure reference. Think of it as the employee handbook. | You, then agent refines |
 | **USER.md** | Information about the human operator -- name, timezone, preferences, working style. Helps the agent tailor its behavior. | You (per user) |
 | **TOOLS.md** | Environment details -- OS, shell, available services, API keys, credentials references. The agent's awareness of what tools it can reach. | You (per machine) |
 | **MEMORY.md** | Long-term memory. Key decisions, learned preferences, recurring patterns. Updated automatically at the end of sessions. This is how agents persist across conversations. | Agent (automatically) |
+
+### Dynamic Fields in IDENTITY.md
+
+The Command Center parses two additional optional fields from `IDENTITY.md`:
+
+| Field | Example | Effect |
+|-------|---------|--------|
+| `Category:` | `Category: engineering` | Server extracts the category and sends it to the dashboard. The frontend generates filter chips dynamically from the set of all agent categories. Falls back to "uncategorized" if not present. |
+| `Color:` | `Color: #7c4dff` | Server extracts the hex color. The dashboard uses it for the agent card border/glow, and the terminal uses it for cursor and selection color when that agent's session is active. Falls back to a category-based default if not set. |
 
 ### The Boot Sequence
 
@@ -122,6 +136,10 @@ When Claude starts in an agent workspace, `CLAUDE.md` instructs it to read files
 6. `MEMORY.md` -- restores continuity from past sessions
 
 The directive is: **"Absorb and become. Don't summarize back."** The agent should internalize these files silently and start working, not recite what it read.
+
+### Initial Prompt Support
+
+When launching a session from the Command Center, an optional `initialPrompt` can be included in the `POST /api/sessions` request body. After the Claude CLI boots and reads its workspace files (a 3-second delay is applied for stability), the server writes the prompt text directly to the PTY stdin. This enables hands-free task execution -- launch an agent with a specific instruction and let it run.
 
 ---
 
@@ -270,7 +288,7 @@ The agent then focuses its work on that topic's domain.
 
 ### Topic Discovery
 
-The Command Center discovers topics by scanning the `topics/` directory in each agent workspace. Topics appear as selectable options on agent cards in the dashboard.
+The Command Center discovers topics by scanning the `topics/` directory in each agent workspace. Topics appear as selectable chips on agent cards in the dashboard, and as options in the command palette and context menu.
 
 ---
 
@@ -284,7 +302,7 @@ The Command Center is a web-based dashboard for launching and managing agent ses
 |-----------|-----------|---------|
 | HTTP Server | Express.js | REST API + static file serving |
 | Terminal Emulation | node-pty | Spawn and manage pseudo-terminal processes |
-| Frontend Terminal | xterm.js | Render terminal output in the browser |
+| Frontend Terminal | xterm.js + addons | Render terminal output in the browser (includes search addon) |
 | Real-Time Communication | WebSocket (ws) | Stream PTY output to browser, send user input back |
 
 There is no build step, no bundler, and no frontend framework. The public directory serves raw HTML, CSS, and JavaScript.
@@ -295,25 +313,39 @@ There is no build step, no bundler, and no frontend framework. The public direct
 sequenceDiagram
     participant Browser
     participant Express as Express Server
+    participant Cache as Agent Cache (30s TTL)
     participant PTY as node-pty
     participant Claude as Claude CLI
     participant FS as Agent Workspace
 
-    Note over Browser,FS: Agent Discovery
+    Note over Browser,FS: Agent Discovery (cached)
     Browser->>Express: GET /api/agents
-    Express->>FS: Scan ~/clawd-* directories
-    FS-->>Express: List of directories with IDENTITY.md
-    Express->>FS: Parse each IDENTITY.md
-    FS-->>Express: Name, emoji, role, vibe
+    Express->>Cache: Check cache (30s TTL)
+    alt Cache hit
+        Cache-->>Express: Cached agent list
+    else Cache miss
+        Express->>FS: Scan ~/clawd-* directories
+        FS-->>Express: List of directories with IDENTITY.md
+        Express->>FS: Parse each IDENTITY.md (name, emoji, role, category, color)
+        FS-->>Express: Agent metadata
+        Express->>Cache: Store result (30s TTL)
+    end
     Express-->>Browser: JSON array of agents
 
-    Note over Browser,FS: Session Creation
-    Browser->>Express: POST /api/sessions {agentId, topic, cols, rows}
+    Note over Browser,FS: Health Check
+    Browser->>Express: GET /api/health
+    Express-->>Browser: {uptime, memory, sessions, agents, version}
+
+    Note over Browser,FS: Session Creation (with optional initial prompt)
+    Browser->>Express: POST /api/sessions {agentId, topic, cols, rows, initialPrompt}
+    Express->>Express: Validate inputs (agentId, topic, cols, rows)
     Express->>PTY: spawn("claude", {cwd: ~/clawd-{agent}})
     PTY->>Claude: Start Claude CLI process
     Claude->>FS: Read CLAUDE.md (boot sequence)
     Claude->>FS: Read IDENTITY.md, SOUL.md, AGENTS.md...
     Express-->>Browser: {sessionId}
+    Note over Express,PTY: If initialPrompt: write to PTY after 3s delay
+    Express->>Cache: Invalidate agent cache
 
     Note over Browser,FS: Terminal Streaming
     Browser->>Express: WebSocket upgrade /ws/terminal/{sessionId}
@@ -327,6 +359,10 @@ sequenceDiagram
         Express->>PTY: pty.write(data)
     end
 
+    Note over Browser,FS: Idle Timeout Monitoring
+    Express->>Express: Track last activity timestamp per session
+    Note right of Express: Auto-kill after IDLE_TIMEOUT (default 1800s)
+
     Note over Browser,FS: Session Reconnection
     Browser->>Express: WebSocket /ws/terminal/{sessionId}
     Express-->>Browser: Replay full scrollback buffer (200KB)
@@ -339,11 +375,68 @@ The server discovers agents at runtime by scanning the user's home directory:
 
 1. List all directories matching the `clawd-*` prefix
 2. Filter to those containing an `IDENTITY.md` file
-3. Parse `IDENTITY.md` to extract name, emoji, role, and vibe
+3. Parse `IDENTITY.md` to extract name, emoji, role, vibe, **category**, and **color**
 4. Scan `topics/` subdirectory for available topics
 5. Return the full agent list sorted alphabetically
 
 This happens on every `GET /api/agents` call -- no registration, no database. Add a new agent directory and it appears automatically.
+
+#### Agent Discovery Caching
+
+To avoid scanning the filesystem on every request, the server caches the agent list with a **30-second TTL**. The cache is automatically invalidated when:
+
+- A new session is created (`POST /api/sessions`)
+- A session is deleted (`DELETE /api/sessions/:id`)
+
+This means new agents appear within 30 seconds of creation, and the dashboard always reflects accurate session state.
+
+### Health Check Endpoint
+
+The server exposes a `GET /api/health` endpoint that returns:
+
+```json
+{
+  "status": "ok",
+  "uptime": 86400,
+  "memory": {
+    "rss": 67108864,
+    "heapUsed": 25165824,
+    "heapTotal": 50331648
+  },
+  "sessions": {
+    "active": 3,
+    "max": 8
+  },
+  "agents": 8,
+  "version": "1.0.0"
+}
+```
+
+This endpoint is used by the dashboard stats bar and can be polled by external monitoring systems (e.g., Uptime Kuma, Healthchecks.io).
+
+### Session Idle Timeout
+
+Each session tracks its last activity timestamp (updated on every PTY write or WebSocket message). A background interval checks all sessions and kills any that have been idle longer than the `IDLE_TIMEOUT` threshold (default: 1800 seconds / 30 minutes).
+
+When a session is killed due to idle timeout:
+1. The PTY process is terminated
+2. Session history is flushed to disk
+3. Connected WebSocket clients receive a `session_ended` message with a timeout indicator
+4. A browser notification is sent if the tab is in the background
+
+The timeout is configurable via the `IDLE_TIMEOUT` environment variable (in seconds). Set to `0` to disable idle timeout entirely.
+
+### Graceful Shutdown
+
+When the server receives `SIGTERM` or `SIGINT`:
+
+1. All active session histories are flushed to disk
+2. Session state is saved
+3. All WebSocket connections are closed cleanly
+4. The HTTP server stops accepting new connections
+5. The process exits with code 0
+
+This ensures no session data is lost during restarts, deployments, or system shutdowns.
 
 ### PTY Session Management
 
@@ -357,6 +450,8 @@ Sessions are the core abstraction. Each session represents a running Claude CLI 
 - **Multi-client support.** Multiple browser tabs can connect to the same session. PTY output fans out to all connected WebSocket clients.
 - **Session history.** All output is written to a log file in `~/.clawhive/history/` for post-session review.
 - **CURRENT_TASK.md.** The server periodically writes the last 2000 characters of output to the agent's `CURRENT_TASK.md`, so the agent can reference it if restarted.
+- **Initial prompt support.** An optional prompt string can be sent to the PTY 3 seconds after session creation, enabling hands-free task execution.
+- **Idle timeout.** Sessions inactive for longer than `IDLE_TIMEOUT` seconds (default 1800) are automatically terminated.
 - **Configurable limits.** Maximum concurrent sessions (default 8), scrollback size, history directory, and workspace prefix are all configurable via environment variables.
 
 ### WebSocket Protocol
@@ -467,8 +562,9 @@ The Command Center and setup scripts support these environment variables:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `PORT` | `3096` | Command Center HTTP/WebSocket port |
-| `WORKSPACE_PREFIX` | `clawd-` | Directory prefix for agent workspaces |
-| `MAX_SESSIONS` | `8` | Maximum concurrent PTY sessions |
-| `HISTORY_DIR` | `~/.clawhive/history` | Directory for session log files |
-| `SKIP_DIRS` | (empty) | Comma-separated workspace names to ignore |
 | `CLAUDE_BIN` | `claude` | Path to the Claude CLI binary |
+| `WORKSPACE_PREFIX` | `clawd-` | Directory prefix for agent workspaces |
+| `SKIP_DIRS` | *(empty)* | Comma-separated workspace names to ignore during agent discovery |
+| `MAX_SESSIONS` | `8` | Maximum concurrent PTY sessions |
+| `IDLE_TIMEOUT` | `1800` | Seconds of inactivity before a session is automatically terminated. Set to `0` to disable. |
+| `HISTORY_DIR` | `~/.clawhive/history` | Directory for session log files |

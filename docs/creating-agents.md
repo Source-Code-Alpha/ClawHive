@@ -133,6 +133,13 @@ Format (newest first):
 
 This is the agent's business card. The Command Center parses this file for agent discovery, so the `Name:`, `Emoji:`, `Role:`, and `Vibe:` fields must follow the format shown below.
 
+The Command Center also reads two optional fields that power dashboard features:
+
+| Field | Example | Dashboard Feature |
+|-------|---------|-------------------|
+| `Category:` | `Category: engineering` | Generates dynamic filter chips. All agent categories are collected at runtime and shown as clickable filters above the agent grid. Falls back to "uncategorized" if not present. |
+| `Color:` | `Color: #7c4dff` | Sets the agent's accent color -- used for card border/glow on the dashboard and cursor/selection color in the terminal. Falls back to a category-based default if not set. |
+
 ```markdown
 # IDENTITY.md
 
@@ -140,6 +147,8 @@ This is the agent's business card. The Command Center parses this file for agent
 - **Creature:** DevOps Engineer
 - **Emoji:** 🚀
 - **Vibe:** Calm, methodical, automation-obsessed, reliability-focused
+- **Category:** engineering
+- **Color:** #ff6d00
 
 ## Role
 
@@ -641,6 +650,8 @@ Here is a fully fleshed-out agent you can use as a reference or starting point.
 - **Creature:** DevOps Engineer
 - **Emoji:** 🚀
 - **Vibe:** Calm, methodical, automation-obsessed, reliability-focused
+- **Category:** engineering
+- **Color:** #ff6d00
 
 ## Role
 
@@ -863,6 +874,56 @@ Language: English
 - Terraform Cloud token in ~/.terraformrc
 - NEVER commit real credentials to git -- use .env files or secret managers
 ```
+
+---
+
+## How Your Agent Appears in the Command Center
+
+The Command Center uses information from `IDENTITY.md` to render agent cards and power several dashboard features:
+
+### Card Display
+
+- **Name** and **Emoji** appear as the card title
+- **Role** appears as the card subtitle
+- **Vibe** keywords appear in the detail panel (double-click the card)
+- **Topics** from the `topics/` directory appear as clickable chips on the card
+
+### Category Filtering
+
+If your `IDENTITY.md` includes a `Category:` field:
+
+```markdown
+- **Category:** engineering
+```
+
+The dashboard generates filter chips dynamically from all agent categories. Users can click a chip to show only agents in that category. If no `Category:` is set, the agent falls under "uncategorized."
+
+### Accent Color
+
+If your `IDENTITY.md` includes a `Color:` field:
+
+```markdown
+- **Color:** #7c4dff
+```
+
+The dashboard uses this color for:
+- Agent card border and glow effect
+- Terminal cursor color when that agent's session is active
+- Terminal text selection color
+
+If no `Color:` is set, a default color is assigned based on the agent's category.
+
+### Pin / Favorite System
+
+Users can star agents to pin them to the top of the grid. This is stored in the browser's localStorage, so it persists per-device but requires no server-side changes. Pinned agents always appear first, regardless of sort order.
+
+### Context Menu and Quick Prompt
+
+Right-clicking an agent card opens a context menu with:
+- Launch session
+- Launch with a specific topic
+- Launch with a custom starting prompt (Quick Prompt Mode)
+- View agent details
 
 ---
 

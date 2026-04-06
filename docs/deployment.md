@@ -152,6 +152,7 @@ ExecStart=/usr/bin/node --import tsx server/index.ts
 Restart=on-failure
 RestartSec=5
 Environment=PORT=3096
+Environment=IDLE_TIMEOUT=1800
 Environment=NODE_ENV=production
 
 [Install]
@@ -310,6 +311,7 @@ services:
       - PORT=3096
       - WORKSPACE_PREFIX=clawd-
       - MAX_SESSIONS=8
+      - IDLE_TIMEOUT=1800
     restart: unless-stopped
 
 volumes:
@@ -338,11 +340,12 @@ All configuration is done through environment variables. Set them in your shell,
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `PORT` | `3096` | Port the command center listens on |
+| `PORT` | `3096` | Port the command center listens on. |
 | `CLAUDE_BIN` | `claude` | Path to the Claude Code CLI binary. Change this if `claude` is not on your PATH or you want to use a wrapper script. |
 | `WORKSPACE_PREFIX` | `clawd-` | Prefix for agent workspace directories. The server discovers agents by scanning `$HOME` for directories matching `{prefix}{agent-id}/`. |
 | `SKIP_DIRS` | *(empty)* | Comma-separated list of directory names to skip during agent discovery. Useful for excluding backup or archived workspaces (e.g., `clawd-old-agent,clawd-test`). |
 | `MAX_SESSIONS` | `8` | Maximum number of concurrent agent sessions. Each session spawns a Claude CLI process with a PTY, so this limits resource usage. |
+| `IDLE_TIMEOUT` | `1800` | Number of seconds a session can remain idle before it is automatically terminated. The server tracks last-activity timestamps and runs a periodic check. Set to `0` to disable idle timeout entirely. |
 | `HISTORY_DIR` | `~/.clawhive/history` | Directory where session log files are stored. Each session creates a timestamped `.log` file with the full terminal output. |
 
 ### Example .env File
@@ -356,6 +359,7 @@ CLAUDE_BIN=claude
 WORKSPACE_PREFIX=clawd-
 SKIP_DIRS=clawd-archive,clawd-test
 MAX_SESSIONS=12
+IDLE_TIMEOUT=1800
 HISTORY_DIR=~/.clawhive/history
 ```
 
@@ -365,7 +369,7 @@ The server reads from `process.env`. How you set these depends on your deploymen
 
 ```bash
 # Direct (inline)
-PORT=8080 MAX_SESSIONS=4 npx tsx server/index.ts
+PORT=8080 MAX_SESSIONS=4 IDLE_TIMEOUT=3600 npx tsx server/index.ts
 
 # From .env file (using dotenv or shell)
 source .env && npx tsx server/index.ts
@@ -373,14 +377,16 @@ source .env && npx tsx server/index.ts
 # In systemd service
 Environment=PORT=3096
 Environment=MAX_SESSIONS=12
+Environment=IDLE_TIMEOUT=1800
 
 # In Docker
-docker run -e PORT=3096 -e MAX_SESSIONS=12 clawhive
+docker run -e PORT=3096 -e MAX_SESSIONS=12 -e IDLE_TIMEOUT=1800 clawhive
 
 # In docker-compose.yml
 environment:
   - PORT=3096
   - MAX_SESSIONS=12
+  - IDLE_TIMEOUT=1800
 ```
 
 ---
@@ -430,6 +436,7 @@ Environment=PORT=3096
 Environment=CLAUDE_BIN=claude
 Environment=WORKSPACE_PREFIX=clawd-
 Environment=MAX_SESSIONS=8
+Environment=IDLE_TIMEOUT=1800
 Environment=HISTORY_DIR=/home/your-username/.clawhive/history
 
 # Security hardening (optional)
