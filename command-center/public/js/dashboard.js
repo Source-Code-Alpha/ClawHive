@@ -8,6 +8,9 @@ let terminals = new Map();
 let currentSessionId = null;
 let selectedAgentId = null;
 let currentFilter = 'all';
+let pinnedAgents = JSON.parse(localStorage.getItem('pinnedAgents') || '[]');
+let currentSort = localStorage.getItem('agentSort') || 'name';
+let viewMode = localStorage.getItem('viewMode') || 'grid';
 
 // ── XSS Protection (#11) ────────────────────────────────────────
 function esc(str) {
@@ -51,14 +54,9 @@ const categoryLabels = {
 };
 
 const agentAccentColors = {
-  coding:      '#7c4dff',
-  researcher:  '#00bcd4',
-  social:      '#ec4899',
-  life:        '#00e676',
-  prompter:    '#f59e0b',
-  designer:    '#a855f7',
-  auditor:     '#22c55e',
-  finance:     '#ff6d00',
+  coding: '#7c4dff', researcher: '#00bcd4', social: '#ec4899',
+  life: '#00e676', prompter: '#f59e0b', designer: '#a855f7',
+  auditor: '#22c55e', finance: '#ff6d00',
 };
 
 // ── Category helper — prefer server-provided, fallback to hardcoded (#16) ──
@@ -84,6 +82,13 @@ function setupGridClicks() {
   const grid = document.getElementById('agent-grid');
 
   grid.addEventListener('click', (e) => {
+    // Pin button (#2)
+    const pinBtn = e.target.closest('.pin-btn[data-pin]');
+    if (pinBtn) {
+      e.stopPropagation();
+      togglePin(pinBtn.dataset.pin);
+      return;
+    }
     // Quick-launch topic chip (#4)
     const chip = e.target.closest('.topic-chip[data-topic]');
     if (chip) {
@@ -185,8 +190,10 @@ async function loadAgents() {
     document.getElementById('skeleton-grid').style.display = 'none';
     const grid = document.getElementById('agent-grid');
     grid.style.display = '';
+    buildDynamicChips();
     renderAgentGrid(agents);
     updateSessionCount();
+    updateStatsBar();
   } catch (err) {
     console.error('Failed to load agents:', err);
   }
@@ -207,13 +214,25 @@ function filterAgents(e) {
 function renderAgentGrid(agentList) {
   const grid = document.getElementById('agent-grid');
 
-  // Apply category filter — use server-provided category (#16), fallback to hardcoded
+  // Apply category filter
   let filtered = agentList;
   if (currentFilter === 'active') {
     filtered = agentList.filter(a => a.hasActiveSession);
+  } else if (currentFilter === 'pinned') {
+    filtered = agentList.filter(a => isPinned(a.id));
   } else if (currentFilter !== 'all') {
     filtered = agentList.filter(a => getCategory(a) === currentFilter);
   }
+
+  // Sort pinned agents first, then by chosen sort (#19)
+  filtered = [...filtered].sort((a, b) => {
+    const ap = isPinned(a.id) ? 0 : 1;
+    const bp = isPinned(b.id) ? 0 : 1;
+    if (ap !== bp) return ap - bp;
+    if (currentSort === 'topics') return b.topics.length - a.topics.length;
+    if (currentSort === 'category') return getCategory(a).localeCompare(getCategory(b));
+    return a.name.localeCompare(b.name);
+  });
 
   // Group by category
   const groups = {};
@@ -249,14 +268,16 @@ function renderAgentGrid(agentList) {
       const moreTopics = agent.topics.length > 3
         ? `<span class="topic-chip">+${agent.topics.length - 3}</span>` : '';
 
+      const pinned = isPinned(agent.id);
       html += `
-        <div class="agent-card ${agent.hasActiveSession ? 'has-session' : ''}"
+        <div class="agent-card ${agent.hasActiveSession ? 'has-session' : ''} ${pinned ? 'is-pinned' : ''}"
              style="--card-accent:${escAttr(accent)}; --card-glow:${escAttr(accent)}30"
              data-agent="${escAttr(agent.id)}">
           <div class="card-top">
             <span class="agent-emoji">${esc(agent.emoji)}</span>
             <div class="status-indicator ${agent.hasActiveSession ? 'active' : ''}"></div>
           </div>
+          <button class="pin-btn ${pinned ? 'pinned' : ''}" data-pin="${escAttr(agent.id)}" title="${pinned ? 'Unpin' : 'Pin to top'}">⭐</button>
           <div class="card-body">
             <div class="agent-name">${esc(agent.name)}</div>
             <div class="agent-role">${esc(agent.role)}</div>
@@ -321,7 +342,7 @@ function closeTopicModal(e) {
 }
 
 // ── Launch Agent Session ───────────────────────────────────────
-async function launchAgent(agentId, topic) {
+async function launchAgent(agentId, topic, initialPrompt) {
   document.getElementById('topic-modal').classList.remove('open');
   const sessionId = topic ? `${agentId}:${topic}` : agentId;
 
@@ -334,7 +355,7 @@ async function launchAgent(agentId, topic) {
     const res = await fetch('/api/sessions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ agentId, topic, cols: 120, rows: 30 }),
+      body: JSON.stringify({ agentId, topic, cols: 120, rows: 30, initialPrompt }),
     });
 
     if (!res.ok) {
@@ -356,7 +377,7 @@ async function launchAgent(agentId, topic) {
 // ── Terminal Management ────────────────────────────────────────
 function createTerminal(sessionId, agentId, topic) {
   const agent = agents.find(a => a.id === agentId) || { name: agentId, emoji: '🤖' };
-  const accent = agentAccentColors[agentId] || '#7c4dff';
+  const accent = agent.color || agentAccentColors[agentId] || '#7c4dff';
 
   const terminal = new window.Terminal({
     fontFamily: "'JetBrains Mono', 'Cascadia Code', 'Fira Code', monospace",
@@ -383,8 +404,10 @@ function createTerminal(sessionId, agentId, topic) {
   });
 
   const fitAddon = new window.FitAddon.FitAddon();
+  const searchAddon = window.SearchAddon ? new window.SearchAddon.SearchAddon() : null;
   terminal.loadAddon(fitAddon);
   terminal.loadAddon(new window.WebLinksAddon.WebLinksAddon());
+  if (searchAddon) terminal.loadAddon(searchAddon);
 
   // WebSocket with auto-reconnect
   const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -408,7 +431,20 @@ function createTerminal(sessionId, agentId, topic) {
     ws.onmessage = (e) => {
       try {
         const ctrl = JSON.parse(e.data);
-        if (ctrl.type === 'session_ended') return;
+        if (ctrl.type === 'session_ended') {
+          const e2 = terminals.get(sessionId);
+          sendNotification('Session Ended', `${e2?.agent?.name || sessionId} session finished`);
+          return;
+        }
+        if (ctrl.type === 'idle_timeout') {
+          showToast('Session timed out due to inactivity', 'warning');
+          sendNotification('Session Timeout', `${sessionId} was idle too long`);
+          return;
+        }
+        if (ctrl.type === 'idle_warning') {
+          showToast('Session will timeout in 5 minutes', 'warning');
+          return;
+        }
         if (ctrl.type === 'server_shutdown') {
           showToast('Server shutting down...', 'warning');
           return;
@@ -451,8 +487,9 @@ function createTerminal(sessionId, agentId, topic) {
   });
 
   terminals.set(sessionId, {
-    terminal, fitAddon, ws, agent, topic, resizeObserver, accent,
+    terminal, fitAddon, searchAddon, ws, agent, topic, resizeObserver, accent,
     lastDataTime: Date.now(),
+    autoScroll: true,
     intentionallyClosed: () => { intentionallyClosed = true; },
     clearReconnect: () => { if (reconnectTimer) clearTimeout(reconnectTimer); },
   });
@@ -732,6 +769,7 @@ function showContextMenu(x, y, agentId) {
 
   const items = [
     { icon: '▶', label: 'Launch Session', action: () => launchAgent(agentId) },
+    { icon: '💬', label: 'Launch with Prompt...', action: () => showPromptLaunchModal(agentId) },
   ];
 
   if (agent.topics.length > 0) {
@@ -740,6 +778,7 @@ function showContextMenu(x, y, agentId) {
 
   items.push(
     { icon: 'ℹ', label: 'View Details', action: () => showDetailPanel(agentId) },
+    { icon: isPinned(agentId) ? '⭐' : '☆', label: isPinned(agentId) ? 'Unpin' : 'Pin to Top', action: () => togglePin(agentId) },
     { sep: true },
     { icon: '📋', label: 'Copy workspace path', action: () => { navigator.clipboard?.writeText(`cd ~/clawd-${agentId}`); showToast('Path copied', 'info'); } },
   );
@@ -817,4 +856,313 @@ function updateFaviconBadge(count) {
   ctx.textBaseline = 'middle';
   ctx.fillText(String(count), 52, 13);
   link.href = canvas.toDataURL();
+}
+
+// ── Export Session (#11) ────────────────────────────────────────
+function exportSession() {
+  const entry = terminals.get(currentSessionId);
+  if (!entry) return;
+  const text = `# Session Export\n\n` +
+    `**Agent:** ${entry.agent.emoji} ${entry.agent.name}\n` +
+    `**Topic:** ${entry.topic || 'general'}\n` +
+    `**Date:** ${new Date().toISOString()}\n\n---\n\n` +
+    entry.terminal.buffer.active.getLine(0) ? (() => {
+      let out = '';
+      const buf = entry.terminal.buffer.active;
+      for (let i = 0; i < buf.length; i++) {
+        const line = buf.getLine(i);
+        if (line) out += line.translateToString(true) + '\n';
+      }
+      return '```\n' + out + '```\n';
+    })() : '(empty)\n';
+
+  const blob = new Blob([text], { type: 'text/markdown' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `session-${entry.agent.id}${entry.topic ? '-' + entry.topic : ''}-${new Date().toISOString().slice(0,10)}.md`;
+  a.click();
+  URL.revokeObjectURL(url);
+  showToast('Session exported', 'success');
+}
+
+// ── Terminal Search (#13) ───────────────────────────────────────
+function toggleTerminalSearch() {
+  const bar = document.getElementById('terminal-search-bar');
+  if (bar.style.display === 'none') {
+    bar.style.display = '';
+    document.getElementById('terminal-search-input').focus();
+  } else {
+    closeTerminalSearch();
+  }
+}
+
+function closeTerminalSearch() {
+  document.getElementById('terminal-search-bar').style.display = 'none';
+  document.getElementById('terminal-search-input').value = '';
+  const entry = terminals.get(currentSessionId);
+  if (entry?.searchAddon) entry.searchAddon.clearDecorations();
+}
+
+function termSearchNext() {
+  const entry = terminals.get(currentSessionId);
+  const q = document.getElementById('terminal-search-input').value;
+  if (entry?.searchAddon && q) entry.searchAddon.findNext(q);
+}
+
+function termSearchPrev() {
+  const entry = terminals.get(currentSessionId);
+  const q = document.getElementById('terminal-search-input').value;
+  if (entry?.searchAddon && q) entry.searchAddon.findPrevious(q);
+}
+
+// Wire Ctrl+F to terminal search
+document.addEventListener('keydown', (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'f' && currentSessionId) {
+    e.preventDefault();
+    toggleTerminalSearch();
+  }
+});
+
+// Wire Enter/Shift+Enter in search input
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('terminal-search-input')?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); e.shiftKey ? termSearchPrev() : termSearchNext(); }
+    if (e.key === 'Escape') closeTerminalSearch();
+  });
+  document.getElementById('terminal-search-input')?.addEventListener('input', (e) => {
+    termSearchNext(); // Live search as you type
+  });
+});
+
+// ── Auto-Scroll Toggle (#17) ───────────────────────────────────
+function toggleAutoScroll() {
+  const entry = terminals.get(currentSessionId);
+  if (!entry) return;
+  entry.autoScroll = !entry.autoScroll;
+  const btn = document.getElementById('autoscroll-btn');
+  if (btn) btn.classList.toggle('active', entry.autoScroll);
+  showToast(entry.autoScroll ? 'Auto-scroll on' : 'Auto-scroll paused', 'info');
+}
+
+// ── Browser Notifications (#14) ────────────────────────────────
+let notificationsEnabled = localStorage.getItem('notifications') === 'true';
+
+function requestNotifications() {
+  if ('Notification' in window && Notification.permission === 'default') {
+    Notification.requestPermission();
+  }
+}
+
+function sendNotification(title, body) {
+  if (!notificationsEnabled) return;
+  if (document.hasFocus()) return; // Don't notify if tab is focused
+  if ('Notification' in window && Notification.permission === 'granted') {
+    new Notification(title, { body, icon: '/favicon.svg' });
+  }
+}
+
+// Request permission on first interaction
+document.addEventListener('click', () => requestNotifications(), { once: true });
+
+// ── Theme System (#9) ───────────────────────────────────────────
+const themes = ['midnight', 'ocean', 'obsidian'];
+let currentTheme = localStorage.getItem('theme') || 'midnight';
+
+function applyTheme(theme) {
+  if (theme === 'midnight') {
+    document.documentElement.removeAttribute('data-theme');
+  } else {
+    document.documentElement.setAttribute('data-theme', theme);
+  }
+  currentTheme = theme;
+  localStorage.setItem('theme', theme);
+}
+
+function cycleTheme() {
+  const idx = themes.indexOf(currentTheme);
+  const next = themes[(idx + 1) % themes.length];
+  applyTheme(next);
+  showToast(`Theme: ${next}`, 'info');
+}
+
+// Apply saved theme on load
+applyTheme(currentTheme);
+
+// ── Agent Sorting (#19) ─────────────────────────────────────────
+function changeSort(sortBy) {
+  currentSort = sortBy;
+  localStorage.setItem('agentSort', sortBy);
+  renderAgentGrid(agents);
+}
+
+// ── PWA Install (#20) ───────────────────────────────────────────
+let deferredInstallPrompt = null;
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  deferredInstallPrompt = e;
+  // Show install button in header
+  const btn = document.createElement('button');
+  btn.className = 'icon-btn';
+  btn.title = 'Install App';
+  btn.textContent = '📲';
+  btn.addEventListener('click', async () => {
+    if (deferredInstallPrompt) {
+      deferredInstallPrompt.prompt();
+      const result = await deferredInstallPrompt.userChoice;
+      if (result.outcome === 'accepted') showToast('App installed!', 'success');
+      deferredInstallPrompt = null;
+      btn.remove();
+    }
+  });
+  document.querySelector('.header-controls')?.prepend(btn);
+});
+
+// ── View Mode Toggle (#10) ──────────────────────────────────────
+function toggleViewMode() {
+  viewMode = viewMode === 'grid' ? 'compact' : 'grid';
+  localStorage.setItem('viewMode', viewMode);
+  const grid = document.getElementById('agent-grid');
+  grid.classList.toggle('compact', viewMode === 'compact');
+  const btn = document.getElementById('view-toggle');
+  if (btn) btn.classList.toggle('active', viewMode === 'compact');
+}
+
+// Apply saved view mode on load
+document.addEventListener('DOMContentLoaded', () => {
+  if (viewMode === 'compact') {
+    document.getElementById('agent-grid')?.classList.add('compact');
+    document.getElementById('view-toggle')?.classList.add('active');
+  }
+});
+
+// ── Pin/Favorite Agents (#2) ────────────────────────────────────
+function togglePin(agentId) {
+  const idx = pinnedAgents.indexOf(agentId);
+  if (idx >= 0) {
+    pinnedAgents.splice(idx, 1);
+    showToast('Unpinned', 'info');
+  } else {
+    pinnedAgents.push(agentId);
+    showToast('Pinned to top', 'success');
+  }
+  localStorage.setItem('pinnedAgents', JSON.stringify(pinnedAgents));
+  renderAgentGrid(agents);
+}
+
+function isPinned(agentId) {
+  return pinnedAgents.includes(agentId);
+}
+
+// ── Dynamic Filter Chips (#6) ───────────────────────────────────
+function buildDynamicChips() {
+  const chipBar = document.getElementById('filter-chips');
+  if (!chipBar) return;
+
+  // Collect unique categories from agents
+  const cats = new Set();
+  for (const a of agents) {
+    cats.add(getCategory(a));
+  }
+
+  chipBar.innerHTML = '';
+
+  // Static chips first
+  const staticChips = [
+    { filter: 'all', label: 'All' },
+    { filter: 'pinned', label: '⭐ Pinned' },
+    { filter: 'active', label: 'Active' },
+  ];
+
+  for (const c of staticChips) {
+    const btn = document.createElement('button');
+    btn.className = `chip${currentFilter === c.filter ? ' active' : ''}`;
+    btn.dataset.filter = c.filter;
+    btn.textContent = c.label;
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.chip').forEach(ch => ch.classList.remove('active'));
+      btn.classList.add('active');
+      currentFilter = c.filter;
+      renderAgentGrid(agents);
+    });
+    chipBar.appendChild(btn);
+  }
+
+  // Dynamic category chips
+  for (const cat of categoryOrder) {
+    if (!cats.has(cat)) continue;
+    const btn = document.createElement('button');
+    btn.className = `chip${currentFilter === cat ? ' active' : ''}`;
+    btn.dataset.filter = cat;
+    btn.textContent = categoryLabels[cat] || cat;
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.chip').forEach(ch => ch.classList.remove('active'));
+      btn.classList.add('active');
+      currentFilter = cat;
+      renderAgentGrid(agents);
+    });
+    chipBar.appendChild(btn);
+  }
+}
+
+// ── Stats Bar (#3) ──────────────────────────────────────────────
+async function updateStatsBar() {
+  try {
+    const res = await fetch('/api/health');
+    const stats = await res.json();
+    const bar = document.getElementById('stats-bar');
+    if (!bar) return;
+    bar.style.display = '';
+    const upH = Math.floor(stats.uptime / 3600);
+    const upM = Math.floor((stats.uptime % 3600) / 60);
+    bar.innerHTML = `
+      <span class="stat-item">${stats.agentCount} agents</span>
+      <span class="stat-sep">·</span>
+      <span class="stat-item">${stats.activeSessions}/${stats.maxSessions} sessions</span>
+      <span class="stat-sep">·</span>
+      <span class="stat-item">${stats.memoryMB}MB</span>
+      <span class="stat-sep">·</span>
+      <span class="stat-item">up ${upH}h${upM}m</span>
+    `;
+  } catch {}
+}
+
+// ── Launch with Prompt (#5) ─────────────────────────────────────
+function showPromptLaunchModal(agentId, topic) {
+  const agent = agents.find(a => a.id === agentId);
+  if (!agent) return;
+
+  const modal = document.getElementById('topic-modal');
+  const title = document.getElementById('topic-modal-title');
+  const list = document.getElementById('topic-list');
+
+  title.textContent = `${agent.emoji} ${agent.name}${topic ? ': ' + topic : ''}`;
+  list.innerHTML = '';
+
+  const wrapper = document.createElement('div');
+  wrapper.style.cssText = 'display:flex;flex-direction:column;gap:8px';
+
+  const label = document.createElement('p');
+  label.className = 'modal-subtitle';
+  label.textContent = 'Optional: send a starting prompt';
+  wrapper.appendChild(label);
+
+  const textarea = document.createElement('textarea');
+  textarea.className = 'prompt-textarea';
+  textarea.placeholder = 'e.g. "Review the latest PR" or leave empty for general session';
+  textarea.rows = 3;
+  wrapper.appendChild(textarea);
+
+  const launchBtn = document.createElement('button');
+  launchBtn.className = 'detail-launch-btn';
+  launchBtn.textContent = 'Launch';
+  launchBtn.addEventListener('click', () => {
+    modal.classList.remove('open');
+    launchAgent(agentId, topic, textarea.value.trim() || undefined);
+  });
+  wrapper.appendChild(launchBtn);
+
+  list.appendChild(wrapper);
+  modal.classList.add('open');
+  setTimeout(() => textarea.focus(), 100);
 }

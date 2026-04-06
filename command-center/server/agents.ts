@@ -9,10 +9,10 @@ const SKIP_DIRS = new Set(
   process.env.SKIP_DIRS?.split(",").filter(Boolean) || []
 );
 
-// Agent Discovery Cache
+// ── Agent Discovery Cache (#13) ────────────────────────────────
 let cachedAgents: Agent[] | null = null;
 let cacheTime = 0;
-const CACHE_TTL = 30_000;
+const CACHE_TTL = 30_000; // 30 seconds
 
 export function invalidateAgentCache(): void {
   cachedAgents = null;
@@ -60,6 +60,7 @@ function getTopics(workspace: string): string[] {
 }
 
 export function discoverAgents(): Agent[] {
+  // Return cache if fresh
   if (cachedAgents && Date.now() - cacheTime < CACHE_TTL) {
     return cachedAgents;
   }

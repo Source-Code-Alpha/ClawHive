@@ -47,6 +47,10 @@
         </div>
       </div>
       <div class="header-right">
+        <div class="header-controls">
+          <button class="icon-btn" id="view-toggle" title="Toggle compact view" onclick="toggleViewMode()">☰</button>
+          <button class="icon-btn" id="theme-toggle" title="Cycle theme" onclick="cycleTheme()">◑</button>
+        </div>
         <div class="session-counter">
           <span class="pulse-dot"></span>
           <span id="session-count">0</span><span class="session-max"> / 8</span>
@@ -55,11 +59,21 @@
       </div>
     </header>
 
+    <!-- Stats bar (#3) -->
+    <div id="stats-bar" class="stats-bar" style="display:none"></div>
+
     <!-- Dashboard view -->
     <div id="dashboard-view" class="view active">
-      <div class="search-bar">
-        <svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
-        <input type="text" id="agent-search" placeholder="Search agents... ( / )" autocomplete="off" spellcheck="false">
+      <div class="search-row">
+        <div class="search-bar">
+          <svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+          <input type="text" id="agent-search" placeholder="Search agents... ( / )" autocomplete="off" spellcheck="false">
+        </div>
+        <select id="sort-select" class="sort-select" onchange="changeSort(this.value)">
+          <option value="name">A-Z</option>
+          <option value="category">Category</option>
+          <option value="topics">Topics</option>
+        </select>
       </div>
       <!-- Skeleton loading -->
       <div id="skeleton-grid" class="agent-grid">
@@ -114,10 +128,23 @@
           <span id="breadcrumb-topic-sep" class="breadcrumb-sep" style="display:none">/</span>
           <span id="breadcrumb-topic" class="breadcrumb-topic"></span>
         </nav>
-        <button class="kill-btn" onclick="killCurrentSession()" title="End session">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
-          End
-        </button>
+        <div class="terminal-actions">
+          <button class="icon-btn" onclick="toggleTerminalSearch()" title="Search (Ctrl+F)">🔍</button>
+          <button class="icon-btn" id="autoscroll-btn" onclick="toggleAutoScroll()" title="Auto-scroll">⬇</button>
+          <button class="icon-btn" onclick="exportSession()" title="Export output">💾</button>
+          <button class="kill-btn" onclick="killCurrentSession()" title="End session">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+            End
+          </button>
+        </div>
+      </div>
+      <!-- Terminal search bar (#13) -->
+      <div id="terminal-search-bar" class="terminal-search-bar" style="display:none">
+        <input id="terminal-search-input" type="text" placeholder="Search in terminal..." autocomplete="off" spellcheck="false">
+        <span id="terminal-search-count" class="search-count"></span>
+        <button onclick="termSearchPrev()">▲</button>
+        <button onclick="termSearchNext()">▼</button>
+        <button onclick="closeTerminalSearch()">✕</button>
       </div>
       <div id="terminal-container"></div>
     </div>
@@ -166,6 +193,7 @@
   <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-web-links@0.11.0/lib/addon-web-links.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-search@0.15.0/lib/addon-search.min.js"></script>
   <script src="/js/particles.js"></script>
   <script src="/js/dashboard.js"></script>
   <script src="/js/command-palette.js"></script>

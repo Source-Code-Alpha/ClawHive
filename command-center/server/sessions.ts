@@ -6,10 +6,11 @@ import { WebSocket } from "ws";
 import nodePty from "node-pty";
 const { spawn } = nodePty;
 
-const MAX_SESSIONS = 8;
-const SCROLLBACK_SIZE = 200 * 1024; // 200KB — enough for reconnect replay
+const MAX_SESSIONS = parseInt(process.env.MAX_SESSIONS || "8");
+const SCROLLBACK_SIZE = 200 * 1024; // 200KB -- enough for reconnect replay
 const HISTORY_DIR = path.join(os.homedir(), ".clawhive", "history");
 const KEEPALIVE_INTERVAL = 30_000; // 30s WebSocket ping
+const IDLE_TIMEOUT = parseInt(process.env.IDLE_TIMEOUT || "1800") * 1000; // default 30 min
 
 // Ensure history dir exists
 fs.mkdirSync(HISTORY_DIR, { recursive: true });
@@ -72,7 +73,8 @@ export function createSession(
   agentId: string,
   topic?: string,
   cols = 120,
-  rows = 30
+  rows = 30,
+  initialPrompt?: string
 ): PtySession | null {
   const id = sessionId(agentId, topic);
 
@@ -197,6 +199,16 @@ export function createSession(
   // Initial CURRENT_TASK.md
   updateCurrentTask(agentId, "running");
 
+  // Send initial prompt after Claude boots (#5)
+  if (initialPrompt) {
+    // Delay to let Claude finish loading (reads CLAUDE.md etc)
+    setTimeout(() => {
+      if (session.alive) {
+        session.pty.write(initialPrompt + "\n");
+      }
+    }, 3000);
+  }
+
   sessions.set(id, session);
   console.log(`[session] Created: ${id} (pid=${pty.pid})`);
   return session;
@@ -306,6 +318,55 @@ export function getActiveSessionIds(): Set<string> {
     if (s.alive) ids.add(s.agentId);
   }
   return ids;
+}
+
+// ── Server Stats (#16) ──────────────────────────────────────────
+
+const serverStartTime = Date.now();
+
+export function getServerStats() {
+  const active = [...sessions.values()].filter(s => s.alive);
+  return {
+    uptime: Math.floor((Date.now() - serverStartTime) / 1000),
+    activeSessions: active.length,
+    maxSessions: MAX_SESSIONS,
+    memoryMB: Math.round(process.memoryUsage().heapUsed / 1024 / 1024),
+    nodeVersion: process.version,
+    pid: process.pid,
+  };
+}
+
+// ── Idle Timeout (#15) ──────────────────────────────────────────
+
+if (IDLE_TIMEOUT > 0) {
+  setInterval(() => {
+    const now = Date.now();
+    for (const [id, session] of sessions) {
+      if (!session.alive) continue;
+      const idleMs = now - session.lastActivity.getTime();
+      if (idleMs > IDLE_TIMEOUT) {
+        console.log(`[session] Idle timeout: ${id} (idle ${Math.round(idleMs / 60000)}m)`);
+        // Warn clients before killing
+        const warnMsg = `\r\n\x1b[33m[Session timed out after ${Math.round(IDLE_TIMEOUT / 60000)} minutes of inactivity]\x1b[0m\r\n`;
+        for (const ws of session.clients) {
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(warnMsg);
+            ws.send(JSON.stringify({ type: "idle_timeout" }));
+          }
+        }
+        killSession(id);
+      } else if (idleMs > IDLE_TIMEOUT - 300_000 && idleMs < IDLE_TIMEOUT - 295_000) {
+        // Warn 5 minutes before timeout
+        const warnMsg = `\r\n\x1b[33m[Warning: Session will timeout in 5 minutes due to inactivity]\x1b[0m\r\n`;
+        for (const ws of session.clients) {
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(warnMsg);
+            ws.send(JSON.stringify({ type: "idle_warning", remainingMs: IDLE_TIMEOUT - idleMs }));
+          }
+        }
+      }
+    }
+  }, 60_000); // Check every minute
 }
 
 // ── History API ─────────────────────────────────────────────────

@@ -16,6 +16,7 @@ import {
   getSessionHistory,
   readHistoryFile,
   shutdownAll,
+  getServerStats,
 } from "./sessions.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -44,6 +45,19 @@ function clamp(val: unknown, min: number, max: number, fallback: number): number
   if (isNaN(n)) return fallback;
   return Math.max(min, Math.min(max, n));
 }
+
+// ── Health Check (#16) ───────────────────────────────────────────
+
+app.get("/api/health", (_req, res) => {
+  const stats = getServerStats();
+  const agents = discoverAgents();
+  res.json({
+    status: "ok",
+    ...stats,
+    agentCount: agents.length,
+    timestamp: new Date().toISOString(),
+  });
+});
 
 // ── API Routes ──────────────────────────────────────────────────
 
@@ -75,8 +89,9 @@ app.post("/api/sessions", (req, res) => {
 
   const cols = clamp(req.body.cols, 10, 500, 120);
   const rows = clamp(req.body.rows, 5, 200, 30);
+  const initialPrompt = typeof req.body.initialPrompt === "string" ? req.body.initialPrompt.slice(0, 5000) : undefined;
 
-  const session = createSession(agentId, topic, cols, rows);
+  const session = createSession(agentId, topic, cols, rows, initialPrompt);
   if (!session) {
     const active = [...listSessions()].filter(s => s.alive).length;
     res.status(503).json({ error: `Max sessions reached (${active}/8)` });
@@ -183,6 +198,6 @@ server.listen(PORT, "0.0.0.0", () => {
   const agents = discoverAgents();
   console.log(`\n  Agent Command Center`);
   console.log(`  http://localhost:${PORT}`);
-  console.log(`  http://localhost:${PORT}`);
+  console.log(`  http://localhost`);
   console.log(`  ${agents.length} agents discovered\n`);
 });
