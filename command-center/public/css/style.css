@@ -15,8 +15,8 @@
   --border-active: rgba(124, 77, 255, 0.4);
   --text: #eeeef5;
   --text-secondary: #a0a0c0;
-  --text-muted: #6868a0;
-  --text-dim: #3e3e6a;
+  --text-muted: #8080b0;
+  --text-dim: #5858a0;
   --accent: #7c4dff;
   --accent-soft: rgba(124, 77, 255, 0.15);
   --accent-glow: rgba(124, 77, 255, 0.4);
@@ -36,10 +36,17 @@
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
+/* Global focus ring for accessibility */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 body {
   background: var(--bg-void);
   color: var(--text);
   font-family: var(--font-ui);
+  line-height: 1.5;
   overflow: hidden;
   height: 100vh;
   width: 100vw;
@@ -521,8 +528,8 @@ body {
 /* Pin button (#2) */
 .pin-btn {
   position: absolute;
-  top: 8px;
-  right: 8px;
+  top: 4px;
+  right: 4px;
   background: none;
   border: none;
   font-size: 12px;
@@ -530,7 +537,13 @@ body {
   opacity: 0;
   transition: opacity 0.2s, transform 0.2s var(--ease-spring);
   z-index: 2;
-  padding: 2px;
+  padding: 6px;
+  min-width: 28px;
+  min-height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
   filter: grayscale(1);
 }
 .agent-card:hover .pin-btn { opacity: 0.5; }
@@ -716,7 +729,8 @@ body {
   padding: 10px 14px;
   border-radius: var(--radius-xs);
   cursor: pointer;
-  transition: background 0.1s;
+  transition: background 0.15s;
+  min-height: 40px;
 }
 
 .palette-item.selected {
@@ -733,9 +747,9 @@ body {
 .detail-panel {
   position: fixed;
   top: 0;
-  right: -400px;
+  right: -100%;
   width: 380px;
-  max-width: 90vw;
+  max-width: 85vw;
   height: 100vh;
   background: rgba(8, 8, 20, 0.97);
   backdrop-filter: blur(30px);
@@ -853,11 +867,12 @@ body {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 14px;
+  padding: 10px 14px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--border);
   background: var(--bg-card);
   cursor: pointer;
+  min-height: 40px;
   white-space: nowrap;
   flex-shrink: 0;
   transition: all 0.2s;
@@ -1503,8 +1518,8 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 30px;
-  height: 30px;
+  width: 36px;
+  height: 36px;
   border-radius: var(--radius-xs);
   border: 1px solid var(--border);
   background: transparent;

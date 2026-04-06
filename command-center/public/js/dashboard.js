@@ -277,7 +277,7 @@ function renderAgentGrid(agentList) {
             <span class="agent-emoji">${esc(agent.emoji)}</span>
             <div class="status-indicator ${agent.hasActiveSession ? 'active' : ''}"></div>
           </div>
-          <button class="pin-btn ${pinned ? 'pinned' : ''}" data-pin="${escAttr(agent.id)}" title="${pinned ? 'Unpin' : 'Pin to top'}">⭐</button>
+          <button class="pin-btn ${pinned ? 'pinned' : ''}" data-pin="${escAttr(agent.id)}" title="${pinned ? 'Unpin' : 'Pin to top'}"><svg width="14" height="14" viewBox="0 0 24 24" fill="${pinned ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg></button>
           <div class="card-body">
             <div class="agent-name">${esc(agent.name)}</div>
             <div class="agent-role">${esc(agent.role)}</div>
@@ -342,7 +342,9 @@ function closeTopicModal(e) {
 }
 
 // ── Launch Agent Session ───────────────────────────────────────
+let launching = false;
 async function launchAgent(agentId, topic, initialPrompt) {
+  if (launching) return; // Prevent double-click
   document.getElementById('topic-modal').classList.remove('open');
   const sessionId = topic ? `${agentId}:${topic}` : agentId;
 
@@ -351,6 +353,8 @@ async function launchAgent(agentId, topic, initialPrompt) {
     return;
   }
 
+  launching = true;
+  showToast('Launching session...', 'info');
   try {
     const res = await fetch('/api/sessions', {
       method: 'POST',
@@ -371,6 +375,9 @@ async function launchAgent(agentId, topic, initialPrompt) {
     showToast(`${agent?.emoji || '🤖'} ${agent?.name || agentId} started${topic ? ` (${topic})` : ''}`, 'success');
   } catch (err) {
     console.error('Failed to launch agent:', err);
+    showToast('Failed to launch session', 'error');
+  } finally {
+    launching = false;
   }
 }
 
@@ -767,20 +774,23 @@ function showContextMenu(x, y, agentId) {
   menu.style.left = Math.min(x, window.innerWidth - 200) + 'px';
   menu.style.top = Math.min(y, window.innerHeight - 200) + 'px';
 
+  // SVG icon helper for context menu
+  const svgIcon = (d) => `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">${d}</svg>`;
+
   const items = [
-    { icon: '▶', label: 'Launch Session', action: () => launchAgent(agentId) },
-    { icon: '💬', label: 'Launch with Prompt...', action: () => showPromptLaunchModal(agentId) },
+    { icon: svgIcon('<polygon points="5 3 19 12 5 21 5 3"/>'), label: 'Launch Session', action: () => launchAgent(agentId) },
+    { icon: svgIcon('<path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/>'), label: 'Launch with Prompt...', action: () => showPromptLaunchModal(agentId) },
   ];
 
   if (agent.topics.length > 0) {
-    items.push({ icon: '📂', label: 'Launch with Topic...', action: () => showTopicModal(agent) });
+    items.push({ icon: svgIcon('<path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/>'), label: 'Launch with Topic...', action: () => showTopicModal(agent) });
   }
 
   items.push(
-    { icon: 'ℹ', label: 'View Details', action: () => showDetailPanel(agentId) },
-    { icon: isPinned(agentId) ? '⭐' : '☆', label: isPinned(agentId) ? 'Unpin' : 'Pin to Top', action: () => togglePin(agentId) },
+    { icon: svgIcon('<circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/>'), label: 'View Details', action: () => showDetailPanel(agentId) },
+    { icon: svgIcon(isPinned(agentId) ? '<polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>' : '<polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>'), label: isPinned(agentId) ? 'Unpin' : 'Pin to Top', action: () => togglePin(agentId) },
     { sep: true },
-    { icon: '📋', label: 'Copy workspace path', action: () => { navigator.clipboard?.writeText(`cd ~/clawd-${agentId}`); showToast('Path copied', 'info'); } },
+    { icon: svgIcon('<rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>'), label: 'Copy workspace path', action: () => { navigator.clipboard?.writeText(`cd ~/clawd-${agentId}`); showToast('Path copied', 'info'); } },
   );
 
   for (const item of items) {

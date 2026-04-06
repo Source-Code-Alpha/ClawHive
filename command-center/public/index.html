@@ -32,7 +32,7 @@
         </div>
         <div class="logo-text-group">
           <h1 class="logo-text">Command Center</h1>
-          <span class="logo-sub">ai.nuc</span>
+          <span class="logo-sub">clawhive</span>
         </div>
       </div>
       <div class="header-center">
@@ -48,8 +48,8 @@
       </div>
       <div class="header-right">
         <div class="header-controls">
-          <button class="icon-btn" id="view-toggle" title="Toggle compact view" onclick="toggleViewMode()">☰</button>
-          <button class="icon-btn" id="theme-toggle" title="Cycle theme" onclick="cycleTheme()">◑</button>
+          <button class="icon-btn" id="view-toggle" title="Toggle compact view" onclick="toggleViewMode()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M3 12h18M3 18h18"/></svg></button>
+          <button class="icon-btn" id="theme-toggle" title="Cycle theme" onclick="cycleTheme()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 0 0 18V3z" fill="currentColor"/></svg></button>
         </div>
         <div class="session-counter">
           <span class="pulse-dot"></span>
@@ -129,9 +129,9 @@
           <span id="breadcrumb-topic" class="breadcrumb-topic"></span>
         </nav>
         <div class="terminal-actions">
-          <button class="icon-btn" onclick="toggleTerminalSearch()" title="Search (Ctrl+F)">🔍</button>
-          <button class="icon-btn" id="autoscroll-btn" onclick="toggleAutoScroll()" title="Auto-scroll">⬇</button>
-          <button class="icon-btn" onclick="exportSession()" title="Export output">💾</button>
+          <button class="icon-btn" onclick="toggleTerminalSearch()" title="Search (Ctrl+F)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg></button>
+          <button class="icon-btn" id="autoscroll-btn" onclick="toggleAutoScroll()" title="Auto-scroll"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12l7 7 7-7"/></svg></button>
+          <button class="icon-btn" onclick="exportSession()" title="Export output"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg></button>
           <button class="kill-btn" onclick="killCurrentSession()" title="End session">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
             End
@@ -142,9 +142,9 @@
       <div id="terminal-search-bar" class="terminal-search-bar" style="display:none">
         <input id="terminal-search-input" type="text" placeholder="Search in terminal..." autocomplete="off" spellcheck="false">
         <span id="terminal-search-count" class="search-count"></span>
-        <button onclick="termSearchPrev()">▲</button>
-        <button onclick="termSearchNext()">▼</button>
-        <button onclick="closeTerminalSearch()">✕</button>
+        <button onclick="termSearchPrev()" title="Previous"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 15l-6-6-6 6"/></svg></button>
+        <button onclick="termSearchNext()" title="Next"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 9l6 6 6-6"/></svg></button>
+        <button onclick="closeTerminalSearch()" title="Close"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
       </div>
       <div id="terminal-container"></div>
     </div>
