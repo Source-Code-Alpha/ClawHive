@@ -1,0 +1,14 @@
+# Tools & Environment
+
+## Machine
+- OS: {{YOUR_OS}}
+- Shell: {{YOUR_SHELL}}
+
+## Services
+- {{List financial data services this agent should know about}}
+- {{Spreadsheet tools, if any}}
+- {{Market data APIs, if any}}
+
+## Credentials
+- {{Add API keys, tokens as needed}}
+- {{NEVER commit real credentials to git}}

@@ -1,0 +1,22 @@
+{
+  "name": "clawhive-command-center",
+  "version": "1.0.0",
+  "description": "Web dashboard for managing Claude Code agent sessions with PTY terminals",
+  "type": "module",
+  "scripts": {
+    "dev": "npx tsx server/index.ts",
+    "start": "node --loader tsx server/index.ts"
+  },
+  "dependencies": {
+    "express": "^4.21.0",
+    "ws": "^8.18.0",
+    "node-pty": "^1.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0",
+    "tsx": "^4.19.0",
+    "@types/express": "^5.0.0",
+    "@types/ws": "^8.5.0",
+    "@types/node": "^22.0.0"
+  }
+}

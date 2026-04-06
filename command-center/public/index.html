@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
+  <meta name="theme-color" content="#06060f">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>Agent Command Center</title>
+  <link rel="manifest" href="/manifest.json">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700&family=Space+Mono:wght@400;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <!-- Animated background layers -->
+  <div class="bg-mesh"></div>
+  <canvas id="particles" class="particles-canvas"></canvas>
+  <div class="noise-overlay"></div>
+
+  <!-- Main app container -->
+  <div id="app">
+    <!-- Header -->
+    <header class="header">
+      <div class="header-left">
+        <div class="logo-mark">
+          <div class="logo-ring"></div>
+          <span class="logo-icon">&#x2726;</span>
+        </div>
+        <div class="logo-text-group">
+          <h1 class="logo-text">Command Center</h1>
+          <span class="logo-sub">clawhive</span>
+        </div>
+      </div>
+      <div class="header-center">
+        <div class="filter-chips" id="filter-chips">
+          <button class="chip active" data-filter="all">All</button>
+          <button class="chip" data-filter="engineering">Engineering</button>
+          <button class="chip" data-filter="operations">Operations</button>
+          <button class="chip" data-filter="social">Social</button>
+          <button class="chip" data-filter="research">Research</button>
+          <button class="chip" data-filter="personal">Personal</button>
+          <button class="chip" data-filter="active">Active</button>
+        </div>
+      </div>
+      <div class="header-right">
+        <div class="session-counter">
+          <span class="pulse-dot"></span>
+          <span id="session-count">0</span><span class="session-max"> / 8</span>
+        </div>
+        <kbd class="kbd-hint" title="Focus search">/</kbd>
+      </div>
+    </header>
+
+    <!-- Dashboard view -->
+    <div id="dashboard-view" class="view active">
+      <div class="search-bar">
+        <svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+        <input type="text" id="agent-search" placeholder="Search agents... ( / )" autocomplete="off" spellcheck="false">
+      </div>
+      <!-- Skeleton loading -->
+      <div id="skeleton-grid" class="agent-grid">
+        <div class="agent-card skeleton"><div class="skeleton-emoji"></div><div class="skeleton-line w60"></div><div class="skeleton-line w80"></div></div>
+        <div class="agent-card skeleton"><div class="skeleton-emoji"></div><div class="skeleton-line w60"></div><div class="skeleton-line w80"></div></div>
+        <div class="agent-card skeleton"><div class="skeleton-emoji"></div><div class="skeleton-line w60"></div><div class="skeleton-line w80"></div></div>
+        <div class="agent-card skeleton"><div class="skeleton-emoji"></div><div class="skeleton-line w60"></div><div class="skeleton-line w80"></div></div>
+        <div class="agent-card skeleton"><div class="skeleton-emoji"></div><div class="skeleton-line w60"></div><div class="skeleton-line w80"></div></div>
+        <div class="agent-card skeleton"><div class="skeleton-emoji"></div><div class="skeleton-line w60"></div><div class="skeleton-line w80"></div></div>
+      </div>
+      <div id="agent-grid" class="agent-grid" style="display:none"></div>
+    </div>
+
+    <!-- Terminal view -->
+    <div id="terminal-view" class="view">
+      <div class="terminal-header" id="terminal-header-bar">
+        <button class="back-btn" onclick="showDashboard()" title="Back to dashboard (Esc)">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+        </button>
+        <div class="terminal-agent-info">
+          <span id="terminal-emoji" class="terminal-emoji"></span>
+          <span id="terminal-name" class="terminal-name"></span>
+          <span id="terminal-topic" class="terminal-topic"></span>
+        </div>
+        <button class="kill-btn" onclick="killCurrentSession()" title="End session">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+          End
+        </button>
+      </div>
+      <div id="terminal-container"></div>
+    </div>
+
+    <!-- Session tabs (bottom bar) -->
+    <div id="session-tabs" class="session-tabs"></div>
+  </div>
+
+  <!-- Topic modal -->
+  <div id="topic-modal" class="modal-overlay" onclick="closeTopicModal(event)">
+    <div class="modal-content" onclick="event.stopPropagation()">
+      <h3 id="topic-modal-title"></h3>
+      <p class="modal-subtitle">Select a topic or launch without one</p>
+      <div id="topic-list" class="topic-list"></div>
+      <button class="topic-btn topic-btn-default" onclick="launchAgent(selectedAgentId)">
+        Launch general session
+      </button>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-web-links@0.11.0/lib/addon-web-links.min.js"></script>
+  <script src="/js/particles.js"></script>
+  <script src="/js/dashboard.js"></script>
+</body>
+</html>

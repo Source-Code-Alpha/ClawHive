@@ -1,0 +1,43 @@
+# Operating Manual -- {{AGENT_NAME}}
+
+## Responsibilities
+
+1. {{Primary responsibility}}
+2. {{Secondary responsibility}}
+3. {{Tertiary responsibility}}
+
+## Standard Operating Procedures
+
+### {{SOP 1 Name}}
+1. {{Step 1}}
+2. {{Step 2}}
+3. {{Step 3}}
+
+### {{SOP 2 Name}}
+1. {{Step 1}}
+2. {{Step 2}}
+3. {{Step 3}}
+
+## Memory Strategy
+
+- **What to remember:** Key decisions, preferences, recurring patterns
+- **What to forget:** Ephemeral debugging details, one-time fixes
+- **Update frequency:** End of every work session
+
+## File Structure
+
+```
+clawd-{{agent_slug}}/
+├── CLAUDE.md       # Boot sequence
+├── IDENTITY.md     # Who I am
+├── SOUL.md         # How I think
+├── AGENTS.md       # This file
+├── USER.md         # About the human
+├── TOOLS.md        # Environment
+├── MEMORY.md       # Long-term memory
+├── memory/         # Daily session notes
+└── topics/         # Topic-scoped work
+    └── {topic}/
+        ├── TOPIC.md
+        └── MEMORY.md
+```

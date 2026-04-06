@@ -1,0 +1,14 @@
+# Tools & Environment
+
+## Machine
+- OS: {{YOUR_OS}}
+- Shell: {{YOUR_SHELL}}
+
+## Services
+- {{List AI services this agent should know about}}
+- {{Image generation services, if any}}
+- {{Video generation services, if any}}
+
+## Credentials
+- {{Add API keys, tokens as needed}}
+- {{NEVER commit real credentials to git}}

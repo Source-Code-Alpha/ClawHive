@@ -1,0 +1,12 @@
+# Tools & Environment
+
+## Machine
+- OS: {{YOUR_OS}}
+- Shell: {{YOUR_SHELL}}
+
+## Services
+- {{List services this agent should know about}}
+
+## Credentials
+- {{Add API keys and tokens as needed}}
+- {{NEVER commit real credentials to git -- use .env files}}
