@@ -390,6 +390,79 @@ export async function quickChat(agentId: string, prompt: string, timeoutMs = 60_
   });
 }
 
+// ── Skill Execution (B4 #11) ───────────────────────────────────
+
+export async function executeSkill(skillId: string, args: string = "", timeoutMs = 60_000): Promise<string> {
+  return new Promise((resolve) => {
+    const skillPath = path.join(os.homedir(), `${process.env.WORKSPACE_PREFIX || "clawd-"}shared`, "skills", skillId);
+    const skillMd = path.join(skillPath, "SKILL.md");
+
+    if (!fs.existsSync(skillMd)) {
+      resolve(`Error: Skill ${skillId} not found`);
+      return;
+    }
+
+    // Read skill content as documentation, plus check for runnable scripts
+    const scriptsDir = path.join(skillPath, "scripts");
+    if (!fs.existsSync(scriptsDir)) {
+      // No scripts - just return the SKILL.md
+      try {
+        resolve(fs.readFileSync(skillMd, "utf-8"));
+      } catch {
+        resolve("Failed to read skill");
+      }
+      return;
+    }
+
+    // Find a runnable script
+    let runner: string | null = null;
+    let runnerCmd: string | null = null;
+    try {
+      const scripts = fs.readdirSync(scriptsDir);
+      for (const f of scripts) {
+        if (f.endsWith(".sh")) { runner = path.join(scriptsDir, f); runnerCmd = "bash"; break; }
+        if (f.endsWith(".py")) { runner = path.join(scriptsDir, f); runnerCmd = "python"; break; }
+        if (f.endsWith(".js")) { runner = path.join(scriptsDir, f); runnerCmd = "node"; break; }
+        if (f.endsWith(".ts")) { runner = path.join(scriptsDir, f); runnerCmd = "npx tsx"; break; }
+      }
+    } catch {}
+
+    if (!runner || !runnerCmd) {
+      resolve("No runnable script found in this skill");
+      return;
+    }
+
+    // Spawn a one-shot PTY
+    const argList = args.trim() ? args.split(/\s+/) : [];
+    const cmdParts = runnerCmd.split(" ");
+    const pty = spawn(cmdParts[0], [...cmdParts.slice(1), runner, ...argList], {
+      name: "xterm-256color",
+      cols: 120,
+      rows: 30,
+      cwd: skillPath,
+      env: { ...process.env, TERM: "xterm-256color" } as Record<string, string>,
+    });
+
+    let output = "";
+    let killed = false;
+
+    const cleanup = (text: string) => {
+      if (killed) return;
+      killed = true;
+      try { pty.kill(); } catch {}
+      resolve(text);
+    };
+
+    const timer = setTimeout(() => cleanup(stripAnsi(output) + "\n\n[Timed out]"), timeoutMs);
+
+    pty.onData((data: string) => { output += data; });
+    pty.onExit(() => {
+      clearTimeout(timer);
+      if (!killed) cleanup(stripAnsi(output));
+    });
+  });
+}
+
 // ── Bulk Operations (B3 #9) ────────────────────────────────────
 
 export function killAllSessions(idleOnly = false): number {

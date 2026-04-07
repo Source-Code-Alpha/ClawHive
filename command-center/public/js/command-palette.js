@@ -80,6 +80,10 @@
       { type: 'command', icon: '✨', label: 'Browse Skills', hint: '', action: () => { close(); openSkills(); } },
       { type: 'command', icon: '⚙', label: 'Settings', hint: '', action: () => { close(); openSettings(); } },
       { type: 'command', icon: '📡', label: 'Broadcast to all agents', hint: '', action: () => { close(); openBroadcast(); } },
+      { type: 'command', icon: '📊', label: "Today's Activity Digest", hint: '', action: () => { close(); openDigest(); } },
+      { type: 'command', icon: '🔍', label: 'Search session history', hint: '', action: () => { close(); openHistorySearch(); } },
+      { type: 'command', icon: '💾', label: 'Save current view as project', hint: '', action: () => { close(); promptSaveProject(); } },
+      { type: 'command', icon: '📦', label: 'Load saved project', hint: '', action: () => { close(); promptLoadProject(); } },
     );
 
     // If there's an active session, add kill command
@@ -113,9 +117,35 @@
     return items.filter(item => fuzzyMatch(q, item.label) || fuzzyMatch(q, item.hint));
   }
 
+  // ── Global Search via API (B4 #1) ─────────────────────────
+  let serverResults = [];
+  let serverSearchTimer = null;
+
+  async function fetchGlobalResults(q) {
+    if (!q || q.length < 2) { serverResults = []; render(); return; }
+    try {
+      const res = await fetch('/api/search?q=' + encodeURIComponent(q));
+      const data = await res.json();
+      serverResults = data.map(r => ({
+        type: 'global-' + r.type,
+        icon: r.type === 'topic' ? '📂' : r.type === 'skill' ? '✨' : r.type === 'file' ? '📄' : '🔍',
+        label: r.title,
+        hint: r.preview ? r.preview.slice(0, 60) : r.type,
+        action: () => {
+          close();
+          if (r.type === 'topic' && r.agentId) launchAgent(r.agentId, r.title.split('→').pop().trim());
+          else if (r.type === 'skill') openSkills();
+          else if (r.type === 'file' && r.agentId) openInspector(r.agentId);
+        },
+      }));
+      render();
+    } catch {}
+  }
+
   // ── Render ────────────────────────────────────────────────
   function render() {
-    const filtered = getFiltered();
+    const localFiltered = getFiltered();
+    const filtered = [...localFiltered, ...serverResults];
     selectedIndex = Math.max(0, Math.min(selectedIndex, filtered.length - 1));
 
     list.innerHTML = '';
@@ -155,6 +185,9 @@
   input.addEventListener('input', () => {
     selectedIndex = 0;
     render();
+    // Debounced server search
+    if (serverSearchTimer) clearTimeout(serverSearchTimer);
+    serverSearchTimer = setTimeout(() => fetchGlobalResults(input.value.trim()), 250);
   });
 
   input.addEventListener('keydown', (e) => {

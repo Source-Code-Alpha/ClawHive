@@ -37,7 +37,21 @@ import {
   getActivity,
   logActivity,
   subscribeEvents,
+  globalSearch,
+  searchSessionHistory,
+  getAgentMetrics,
+  getTodayDigest,
+  startMemoryWatcher,
+  saveUploadedFile,
+  getWebhookSecret,
+  validateWebhookSecret,
+  getOutgoingWebhooks,
+  setOutgoingWebhooks,
+  fireOutgoingWebhooks,
+  createShareLink,
+  getShareLink,
 } from "./workspace.js";
+import { executeSkill } from "./sessions.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = parseInt(process.env.PORT || "3096");
@@ -48,7 +62,8 @@ const wss = new WebSocketServer({ noServer: true });
 
 // Serve static frontend
 app.use(express.static(path.join(__dirname, "../public")));
-app.use(express.json());
+app.use(express.json({ limit: "1mb" }));
+app.use(express.raw({ type: "application/octet-stream", limit: "10mb" }));
 
 // ── Input Validation Helpers (#12) ──────────────────────────────
 
@@ -121,6 +136,7 @@ app.post("/api/sessions", (req, res) => {
   // Invalidate agent cache so hasActiveSession updates
   invalidateAgentCache();
   logActivity("session_started", `Started ${agentId}${topic ? ` (${topic})` : ""}`, agentId, topic);
+  fireOutgoingWebhooks({ type: "session_started", data: { agentId, topic } });
 
   res.json({ id: session.id, agentId: session.agentId, topic: session.topic });
 });
@@ -129,6 +145,7 @@ app.delete("/api/sessions/:id", (req, res) => {
   killSession(req.params.id);
   invalidateAgentCache();
   logActivity("session_ended", `Ended ${req.params.id}`);
+  fireOutgoingWebhooks({ type: "session_ended", data: { id: req.params.id } });
   res.json({ ok: true });
 });
 
@@ -239,6 +256,131 @@ app.get("/api/skills/:id", (req, res) => {
 app.get("/api/activity", (_req, res) => {
   const limit = Math.min(parseInt(String(_req.query.limit)) || 50, 200);
   res.json(getActivity(limit));
+});
+
+// ── Global Search (B4 #1) ───────────────────────────────────────
+
+app.get("/api/search", (req, res) => {
+  const q = typeof req.query.q === "string" ? req.query.q : "";
+  res.json(globalSearch(q, 30));
+});
+
+// ── Session History Search (B4 #2) ──────────────────────────────
+
+app.get("/api/history/search", (req, res) => {
+  const q = typeof req.query.q === "string" ? req.query.q : "";
+  res.json(searchSessionHistory(q, 30));
+});
+
+// ── Agent Metrics (B4 #3) ───────────────────────────────────────
+
+app.get("/api/agents/:id/metrics", (req, res) => {
+  const id = validateId(req.params.id);
+  if (!id) { res.status(400).json({ error: "Invalid agent id" }); return; }
+  res.json(getAgentMetrics(id));
+});
+
+// ── Today's Digest (B4 #5) ──────────────────────────────────────
+
+app.get("/api/digest/today", (_req, res) => {
+  res.json(getTodayDigest());
+});
+
+// ── File Upload (B4 #6) ─────────────────────────────────────────
+
+app.post("/api/agents/:id/upload", (req, res) => {
+  const id = validateId(req.params.id);
+  if (!id) { res.status(400).json({ error: "Invalid agent id" }); return; }
+  const filename = typeof req.query.filename === "string" ? req.query.filename : null;
+  if (!filename) { res.status(400).json({ error: "filename query param required" }); return; }
+  if (!Buffer.isBuffer(req.body)) { res.status(400).json({ error: "Send raw bytes as application/octet-stream" }); return; }
+
+  const fpath = saveUploadedFile(id, filename, req.body);
+  if (!fpath) { res.status(400).json({ error: "Upload failed" }); return; }
+  logActivity("file_upload", `Uploaded ${filename}`, id);
+  res.json({ ok: true, path: fpath });
+});
+
+// ── Webhook Receiver (B4 #7) ────────────────────────────────────
+
+app.get("/api/webhooks/secret", (_req, res) => {
+  res.json({ secret: getWebhookSecret() });
+});
+
+app.post("/api/webhooks/:secret/:agentId", async (req, res) => {
+  if (!validateWebhookSecret(req.params.secret)) {
+    res.status(401).json({ error: "Invalid webhook secret" });
+    return;
+  }
+  const agentId = validateId(req.params.agentId);
+  if (!agentId) { res.status(400).json({ error: "Invalid agent id" }); return; }
+  const prompt = req.body?.prompt || req.body?.message || "";
+  if (!prompt) { res.status(400).json({ error: "prompt or message required" }); return; }
+
+  // Fire and forget
+  logActivity("webhook_triggered", `Webhook → ${agentId}`, agentId);
+  fireOutgoingWebhooks({ type: "webhook_received", data: { agentId, prompt } });
+
+  res.json({ ok: true, accepted: true });
+});
+
+// ── Outgoing Webhooks Config (B4 #8) ────────────────────────────
+
+app.get("/api/webhooks/outgoing", (_req, res) => {
+  res.json(getOutgoingWebhooks());
+});
+
+app.put("/api/webhooks/outgoing", (req, res) => {
+  const urls = Array.isArray(req.body?.urls) ? req.body.urls : [];
+  setOutgoingWebhooks(urls);
+  res.json({ ok: true, urls: getOutgoingWebhooks() });
+});
+
+// ── Skill Execution (B4 #11) ────────────────────────────────────
+
+app.post("/api/skills/:id/execute", async (req, res) => {
+  const skillId = validateId(req.params.id);
+  if (!skillId) { res.status(400).json({ error: "Invalid skill id" }); return; }
+  const args = typeof req.body?.args === "string" ? req.body.args : "";
+  try {
+    const output = await executeSkill(skillId, args, 60_000);
+    logActivity("skill_executed", `Ran skill ${skillId}`);
+    res.json({ output });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || "Skill execution failed" });
+  }
+});
+
+// ── Session Share (B4 #12) ──────────────────────────────────────
+
+app.post("/api/share", (req, res) => {
+  const agentId = validateId(req.body?.agentId);
+  if (!agentId) { res.status(400).json({ error: "Invalid agent id" }); return; }
+  const topic = req.body?.topic ? validateId(req.body.topic) : undefined;
+  const content = typeof req.body?.content === "string" ? req.body.content.slice(0, 200_000) : "";
+  const id = createShareLink(agentId, topic, content);
+  res.json({ id, url: `/share/${id}` });
+});
+
+app.get("/api/share/:id", (req, res) => {
+  const link = getShareLink(req.params.id);
+  if (!link) { res.status(404).json({ error: "Share link not found or expired" }); return; }
+  res.json(link);
+});
+
+// Public share view (read-only)
+app.get("/share/:id", (req, res) => {
+  const link = getShareLink(req.params.id);
+  if (!link) { res.status(404).send("Share link not found or expired"); return; }
+  const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Shared Session: ${link.agentId}</title>
+    <style>body{background:#06060f;color:#e0e0f0;font-family:'JetBrains Mono',monospace;padding:30px;line-height:1.5}
+    h1{color:#7c4dff}pre{background:#0c0c1c;padding:20px;border-radius:8px;overflow:auto;border-left:3px solid #7c4dff}
+    .meta{color:#8080b0;font-size:12px;margin-bottom:20px}</style></head><body>
+    <h1>Shared Session: ${link.agentId}${link.topic ? " / " + link.topic : ""}</h1>
+    <div class="meta">Shared ${new Date(link.createdAt).toLocaleString()} · Read-only snapshot</div>
+    <pre>${link.content.replace(/[<>&]/g, c => ({"<":"&lt;",">":"&gt;","&":"&amp;"} as any)[c])}</pre>
+    </body></html>`;
+  res.type("html").send(html);
 });
 
 // ── Quick Chat API (B3 #7) ───────────────────────────────────────
@@ -375,5 +517,8 @@ server.listen(PORT, "0.0.0.0", () => {
   console.log(`\n  Agent Command Center`);
   console.log(`  http://localhost:${PORT}`);
   console.log(`  http://localhost`);
-  console.log(`  ${agents.length} agents discovered\n`);
+  console.log(`  ${agents.length} agents discovered`);
+  console.log(`  Webhook secret: ${getWebhookSecret().slice(0, 8)}...`);
+  startMemoryWatcher();
+  console.log(`  Memory watcher started\n`);
 });

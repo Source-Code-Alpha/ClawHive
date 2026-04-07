@@ -636,10 +636,290 @@ function toggleShortcutsOverlay() {
   overlay.classList.toggle('open');
 }
 
+// ── File Upload to Terminal (B4 #6) ─────────────────────────────
+async function uploadFileToSession(file) {
+  if (!currentSessionId) { showToast('No active session', 'warning'); return; }
+  const entry = terminals.get(currentSessionId);
+  if (!entry) return;
+  if (file.size > 10 * 1024 * 1024) { showToast('File too large (>10MB)', 'error'); return; }
+
+  showToast(`Uploading ${file.name}...`, 'info');
+  try {
+    const buf = await file.arrayBuffer();
+    const res = await fetch(`/api/agents/${encodeURIComponent(entry.agent.id)}/upload?filename=${encodeURIComponent(file.name)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/octet-stream' },
+      body: buf,
+    });
+    const data = await res.json();
+    if (res.ok) {
+      // Send the file path to the terminal so the agent can read it
+      if (entry.ws && entry.ws.readyState === WebSocket.OPEN) {
+        entry.ws.send(`Please read this file: ${data.path}\n`);
+      }
+      showToast(`Uploaded: ${file.name}`, 'success');
+    } else {
+      showToast(`Upload failed: ${data.error}`, 'error');
+    }
+  } catch (err) {
+    showToast(`Upload error: ${err.message}`, 'error');
+  }
+}
+
+// Drag and drop on terminal container
+document.addEventListener('DOMContentLoaded', () => {
+  const container = document.getElementById('terminal-container');
+  if (!container) return;
+  container.addEventListener('dragover', (e) => { e.preventDefault(); container.style.outline = '2px dashed var(--accent)'; });
+  container.addEventListener('dragleave', () => { container.style.outline = ''; });
+  container.addEventListener('drop', (e) => {
+    e.preventDefault();
+    container.style.outline = '';
+    const files = Array.from(e.dataTransfer?.files || []);
+    for (const f of files) uploadFileToSession(f);
+  });
+});
+
+// ── Voice Input (B4 #9) ─────────────────────────────────────────
+let voiceRecognition = null;
+let voiceRecording = false;
+
+function setupVoiceInput() {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) return false;
+  voiceRecognition = new SR();
+  voiceRecognition.lang = 'en-US';
+  voiceRecognition.continuous = false;
+  voiceRecognition.interimResults = false;
+  voiceRecognition.onresult = (e) => {
+    const text = e.results[0][0].transcript;
+    if (currentSessionId) {
+      const entry = terminals.get(currentSessionId);
+      if (entry?.ws?.readyState === WebSocket.OPEN) {
+        entry.ws.send(text + '\n');
+        showToast(`Voice: "${text}"`, 'success');
+      }
+    }
+  };
+  voiceRecognition.onerror = (e) => {
+    showToast(`Voice error: ${e.error}`, 'error');
+    voiceRecording = false;
+    document.getElementById('voice-btn')?.classList.remove('recording');
+  };
+  voiceRecognition.onend = () => {
+    voiceRecording = false;
+    document.getElementById('voice-btn')?.classList.remove('recording');
+  };
+  return true;
+}
+
+function toggleVoiceInput() {
+  if (!voiceRecognition && !setupVoiceInput()) {
+    showToast('Speech recognition not supported in this browser', 'error');
+    return;
+  }
+  if (voiceRecording) {
+    voiceRecognition.stop();
+    voiceRecording = false;
+    document.getElementById('voice-btn')?.classList.remove('recording');
+  } else {
+    try {
+      voiceRecognition.start();
+      voiceRecording = true;
+      document.getElementById('voice-btn')?.classList.add('recording');
+      showToast('Listening... speak now', 'info');
+    } catch {}
+  }
+}
+
+// ── Skill Execution (B4 #11) ────────────────────────────────────
+let executingSkill = null;
+
+function openSkillExec(skillId, skillName) {
+  executingSkill = { id: skillId, name: skillName };
+  document.getElementById('skillexec-title').textContent = `Run: ${skillName}`;
+  document.getElementById('skillexec-args').value = '';
+  document.getElementById('skillexec-output').textContent = '';
+  document.getElementById('skillexec-output').style.display = 'none';
+  document.getElementById('skillexec-overlay').classList.add('open');
+  setTimeout(() => document.getElementById('skillexec-args').focus(), 100);
+}
+
+function closeSkillExec() {
+  document.getElementById('skillexec-overlay').classList.remove('open');
+  executingSkill = null;
+}
+
+async function runSkill() {
+  if (!executingSkill) return;
+  const args = document.getElementById('skillexec-args').value;
+  const out = document.getElementById('skillexec-output');
+  const btn = document.getElementById('skillexec-run');
+  btn.disabled = true;
+  btn.textContent = 'Running...';
+  out.style.display = '';
+  out.textContent = 'Executing skill...';
+  try {
+    const res = await fetch(`/api/skills/${encodeURIComponent(executingSkill.id)}/execute`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ args }),
+    });
+    const data = await res.json();
+    out.textContent = data.output || data.error || '(no output)';
+  } catch (err) {
+    out.textContent = `Error: ${err.message}`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Run Skill';
+  }
+}
+
+// ── Session Share (B4 #12) ──────────────────────────────────────
+async function shareCurrentSession() {
+  if (!currentSessionId) { showToast('No active session', 'warning'); return; }
+  const entry = terminals.get(currentSessionId);
+  if (!entry) return;
+
+  // Capture terminal scrollback
+  let content = '';
+  const buf = entry.terminal.buffer.active;
+  for (let i = 0; i < buf.length; i++) {
+    const line = buf.getLine(i);
+    if (line) content += line.translateToString(true) + '\n';
+  }
+
+  try {
+    const res = await fetch('/api/share', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ agentId: entry.agent.id, topic: entry.topic, content }),
+    });
+    const data = await res.json();
+    const url = window.location.origin + data.url;
+    await navigator.clipboard?.writeText(url);
+    showToast(`Share link copied: ${url}`, 'success');
+  } catch (err) {
+    showToast(`Share failed: ${err.message}`, 'error');
+  }
+}
+
+// ── Today's Digest (B4 #5) ──────────────────────────────────────
+async function openDigest() {
+  document.getElementById('digest-overlay').classList.add('open');
+  document.getElementById('digest-content').innerHTML = '<div style="color:var(--text-dim);font-size:12px">Loading...</div>';
+  try {
+    const res = await fetch('/api/digest/today');
+    const d = await res.json();
+    document.getElementById('digest-date').textContent = new Date(d.date).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+
+    const stats = `
+      <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px">
+        <div style="padding:14px;background:var(--bg-surface);border-radius:var(--radius-sm);border-left:3px solid var(--accent)">
+          <div style="font-size:24px;font-weight:700;color:var(--text)">${d.sessions}</div>
+          <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:1px">Sessions</div>
+        </div>
+        <div style="padding:14px;background:var(--bg-surface);border-radius:var(--radius-sm);border-left:3px solid var(--success)">
+          <div style="font-size:24px;font-weight:700;color:var(--text)">${d.agentsUsed.length}</div>
+          <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:1px">Agents Used</div>
+        </div>
+        <div style="padding:14px;background:var(--bg-surface);border-radius:var(--radius-sm);border-left:3px solid var(--warning)">
+          <div style="font-size:24px;font-weight:700;color:var(--text)">${d.memoryUpdates}</div>
+          <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:1px">Memory Updates</div>
+        </div>
+        <div style="padding:14px;background:var(--bg-surface);border-radius:var(--radius-sm);border-left:3px solid #ec4899">
+          <div style="font-size:24px;font-weight:700;color:var(--text)">${d.topicsCreated}</div>
+          <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:1px">Topics Created</div>
+        </div>
+      </div>
+    `;
+    const events = d.events.length > 0
+      ? `<div><div class="detail-label" style="margin-bottom:6px">Recent events</div>
+          ${d.events.slice(0, 8).map(e => `<div style="font-size:12px;padding:6px 0;border-bottom:1px solid var(--border);color:var(--text-secondary)">${esc(e.message)}</div>`).join('')}
+        </div>`
+      : '<div style="text-align:center;color:var(--text-dim);font-size:12px;padding:20px">No activity yet today</div>';
+
+    document.getElementById('digest-content').innerHTML = stats + events;
+  } catch {
+    document.getElementById('digest-content').innerHTML = '<div style="color:var(--danger)">Failed to load digest</div>';
+  }
+}
+
+function closeDigest() {
+  document.getElementById('digest-overlay').classList.remove('open');
+}
+
+// ── Session History Search (B4 #2) ──────────────────────────────
+function openHistorySearch() {
+  document.getElementById('history-search-overlay').classList.add('open');
+  document.getElementById('history-search-input').value = '';
+  document.getElementById('history-search-results').innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-dim)">Type to search across all session logs</div>';
+  setTimeout(() => document.getElementById('history-search-input').focus(), 100);
+}
+
+function closeHistorySearch() {
+  document.getElementById('history-search-overlay').classList.remove('open');
+}
+
+let historySearchTimer = null;
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('history-search-input')?.addEventListener('input', (e) => {
+    if (historySearchTimer) clearTimeout(historySearchTimer);
+    const q = e.target.value.trim();
+    if (!q) {
+      document.getElementById('history-search-results').innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-dim)">Type to search</div>';
+      return;
+    }
+    historySearchTimer = setTimeout(async () => {
+      try {
+        const res = await fetch('/api/history/search?q=' + encodeURIComponent(q));
+        const data = await res.json();
+        const container = document.getElementById('history-search-results');
+        if (data.length === 0) {
+          container.innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-dim)">No matches</div>';
+          return;
+        }
+        container.innerHTML = '';
+        for (const r of data) {
+          const agent = agents.find(a => a.id === r.agentId);
+          const card = document.createElement('div');
+          card.className = 'topic-card';
+          card.style.flexDirection = 'column';
+          card.style.alignItems = 'flex-start';
+          card.innerHTML = `
+            <div style="display:flex;align-items:center;gap:8px;width:100%">
+              <span style="font-size:16px">${esc(agent?.emoji || '🤖')}</span>
+              <span class="topic-card-name">${esc(agent?.name || r.agentId)}${r.topic ? ': ' + esc(r.topic) : ''}</span>
+              <span class="topic-card-time">${r.matchCount} matches</span>
+            </div>
+            <div style="font-size:11px;color:var(--text-muted);font-family:var(--font-mono);margin-top:6px;line-height:1.5">${esc(r.snippet)}</div>
+          `;
+          container.appendChild(card);
+        }
+      } catch {}
+    }, 250);
+  });
+});
+
 // ── Settings Panel (B3 #20) ─────────────────────────────────────
-function openSettings() {
+async function openSettings() {
   document.getElementById('settings-notifications').checked = notificationsEnabled;
+  document.getElementById('settings-accent').value = localStorage.getItem('customAccent') || '#7c4dff';
   document.getElementById('settings-overlay').classList.add('open');
+
+  // Load webhooks
+  try {
+    const res = await fetch('/api/webhooks/outgoing');
+    const urls = await res.json();
+    document.getElementById('settings-webhooks').value = urls.join('\n');
+  } catch {}
+
+  // Load webhook secret
+  try {
+    const res = await fetch('/api/webhooks/secret');
+    const data = await res.json();
+    document.getElementById('settings-webhook-secret').textContent = data.secret;
+  } catch {}
 }
 function closeSettings() {
   document.getElementById('settings-overlay').classList.remove('open');
@@ -648,6 +928,39 @@ function toggleNotifications(enabled) {
   notificationsEnabled = enabled;
   localStorage.setItem('notifications', String(enabled));
   if (enabled) requestNotifications();
+}
+
+// Theme Customizer (B4 #16)
+function setCustomAccent(color) {
+  document.documentElement.style.setProperty('--accent', color);
+  document.documentElement.style.setProperty('--accent-soft', color + '26');
+  document.documentElement.style.setProperty('--accent-glow', color + '66');
+  localStorage.setItem('customAccent', color);
+}
+function resetCustomAccent() {
+  document.documentElement.style.removeProperty('--accent');
+  document.documentElement.style.removeProperty('--accent-soft');
+  document.documentElement.style.removeProperty('--accent-glow');
+  localStorage.removeItem('customAccent');
+  document.getElementById('settings-accent').value = '#7c4dff';
+}
+// Apply on load
+const savedAccent = localStorage.getItem('customAccent');
+if (savedAccent) setCustomAccent(savedAccent);
+
+async function saveWebhooks() {
+  const text = document.getElementById('settings-webhooks').value;
+  const urls = text.split('\n').map(u => u.trim()).filter(u => u);
+  try {
+    await fetch('/api/webhooks/outgoing', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ urls }),
+    });
+    showToast('Webhooks saved', 'success');
+  } catch {
+    showToast('Save failed', 'error');
+  }
 }
 
 // ── Onboarding Tour (B3 #13) ────────────────────────────────────
@@ -832,6 +1145,7 @@ async function killAllSessions(idleOnly = false) {
 
 // ── Quick Resume Last Session (B3 #11) ──────────────────────────
 let lastClosedSession = null;
+let lastClosedAt = 0;
 
 document.addEventListener('keydown', (e) => {
   if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'R') {
@@ -841,6 +1155,15 @@ document.addEventListener('keydown', (e) => {
       showToast('Resuming last session', 'info');
     } else {
       showToast('No recent session to resume', 'info');
+    }
+  }
+  // Global Undo (B4 #14) — Ctrl+Z restores last killed within 30s
+  if ((e.ctrlKey || e.metaKey) && e.key === 'z' && document.activeElement.tagName !== 'INPUT' && document.activeElement.tagName !== 'TEXTAREA') {
+    if (lastClosedSession && Date.now() - lastClosedAt < 30_000) {
+      e.preventDefault();
+      launchAgent(lastClosedSession.agentId, lastClosedSession.topic);
+      showToast('Undo: session restored', 'success');
+      lastClosedSession = null;
     }
   }
 });
@@ -927,8 +1250,19 @@ function renderSkills(list) {
   for (const s of list) {
     const el = document.createElement('div');
     el.className = 'inspector-list-item';
-    el.textContent = s.name;
+    el.style.justifyContent = 'space-between';
+    const nameSpan = document.createElement('span');
+    nameSpan.textContent = s.name;
+    nameSpan.style.cssText = 'flex:1;overflow:hidden;text-overflow:ellipsis';
+    el.appendChild(nameSpan);
     el.title = s.description || '';
+    if (s.hasScripts) {
+      const runBtn = document.createElement('button');
+      runBtn.textContent = 'Run';
+      runBtn.style.cssText = 'background:var(--accent-soft);border:1px solid var(--border-active);color:var(--accent);padding:2px 8px;border-radius:4px;cursor:pointer;font-size:10px;font-family:var(--font-mono)';
+      runBtn.addEventListener('click', (e) => { e.stopPropagation(); openSkillExec(s.id, s.name); });
+      el.appendChild(runBtn);
+    }
     el.addEventListener('click', async () => {
       document.querySelectorAll('#skills-list .inspector-list-item').forEach(i => i.classList.remove('active'));
       el.classList.add('active');
@@ -1204,7 +1538,30 @@ function showDetailPanel(agentId) {
   const inspectBtn = document.getElementById('detail-inspect');
   if (inspectBtn) inspectBtn.onclick = () => { closeDetailPanel(); openInspector(agent.id); };
 
+  // Load metrics (B4 #3)
+  loadAgentMetrics(agent.id);
+
   document.getElementById('agent-detail').classList.add('open');
+}
+
+async function loadAgentMetrics(agentId) {
+  const container = document.getElementById('detail-metrics');
+  if (!container) return;
+  container.innerHTML = '<div style="font-size:11px;color:var(--text-dim)">Loading...</div>';
+  try {
+    const res = await fetch(`/api/agents/${encodeURIComponent(agentId)}/metrics`);
+    const m = await res.json();
+    const lastUsedStr = m.lastUsed ? new Date(m.lastUsed).toLocaleDateString() : 'never';
+    container.innerHTML = `
+      <div class="metrics-row"><strong>${m.totalSessions}</strong> total sessions</div>
+      <div class="metrics-row">Last used: <strong>${lastUsedStr}</strong></div>
+      <div class="metrics-spark">
+        ${m.recentDates.map(d => `<div class="metrics-spark-bar ${d ? 'active' : ''}" title="${d || 'no activity'}"></div>`).join('')}
+      </div>
+    `;
+  } catch {
+    container.innerHTML = '<div style="font-size:11px;color:var(--text-dim)">Unable to load</div>';
+  }
 }
 
 function closeDetailPanel() {
@@ -1265,8 +1622,9 @@ function showDashboard() {
 async function closeSession(sessionId) {
   const entry = terminals.get(sessionId);
   if (entry) {
-    // Track for quick resume (B3 #11)
+    // Track for quick resume (B3 #11) and undo (B4 #14)
     lastClosedSession = { agentId: entry.agent.id, topic: entry.topic };
+    lastClosedAt = Date.now();
 
     if (entry.intentionallyClosed) entry.intentionallyClosed();
     if (entry.clearReconnect) entry.clearReconnect();
@@ -1534,6 +1892,54 @@ function sendNotification(title, body) {
 
 // Request permission on first interaction
 document.addEventListener('click', () => requestNotifications(), { once: true });
+
+// ── Project Workspaces (B4 #15) ─────────────────────────────────
+function getProjects() {
+  try { return JSON.parse(localStorage.getItem('projects') || '{}'); }
+  catch { return {}; }
+}
+
+function saveProject(name) {
+  if (!name) return;
+  const projects = getProjects();
+  projects[name] = {
+    pinnedAgents: [...pinnedAgents],
+    filter: currentFilter,
+    sort: currentSort,
+    viewMode,
+    theme: currentTheme,
+    savedAt: new Date().toISOString(),
+  };
+  localStorage.setItem('projects', JSON.stringify(projects));
+  showToast(`Project "${name}" saved`, 'success');
+}
+
+function loadProject(name) {
+  const projects = getProjects();
+  const p = projects[name];
+  if (!p) return;
+  pinnedAgents = p.pinnedAgents || [];
+  localStorage.setItem('pinnedAgents', JSON.stringify(pinnedAgents));
+  currentFilter = p.filter || 'all';
+  currentSort = p.sort || 'name';
+  if (p.viewMode && p.viewMode !== viewMode) toggleViewMode();
+  if (p.theme) applyTheme(p.theme);
+  loadAgents();
+  showToast(`Loaded project: ${name}`, 'info');
+}
+
+function promptSaveProject() {
+  const name = prompt('Project name:');
+  if (name) saveProject(name);
+}
+
+function promptLoadProject() {
+  const projects = getProjects();
+  const names = Object.keys(projects);
+  if (names.length === 0) { showToast('No saved projects', 'info'); return; }
+  const name = prompt(`Load project (${names.join(', ')}):`);
+  if (name) loadProject(name);
+}
 
 // ── Theme System (#9) ───────────────────────────────────────────
 const themes = ['midnight', 'ocean', 'obsidian'];

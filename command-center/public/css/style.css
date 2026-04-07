@@ -825,6 +825,41 @@ body {
   text-transform: capitalize;
 }
 
+/* Agent Metrics (B4 #3) */
+.detail-metrics {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.metrics-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.metrics-row strong { color: var(--text); font-weight: 600; }
+
+.metrics-spark {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 32px;
+  margin-top: 4px;
+}
+.metrics-spark-bar {
+  flex: 1;
+  background: var(--bg-surface);
+  border-radius: 2px;
+  min-height: 4px;
+  transition: background 0.2s;
+}
+.metrics-spark-bar.active {
+  background: var(--accent);
+  box-shadow: 0 0 6px var(--accent-glow);
+}
+
 .detail-launch-btn {
   margin-top: auto;
   padding: 12px;
@@ -1806,6 +1841,17 @@ body {
 }
 .icon-btn:hover { background: var(--bg-surface); color: var(--text); border-color: var(--border-hover); }
 .icon-btn.active { color: var(--accent); border-color: var(--border-active); }
+
+.icon-btn.recording {
+  color: var(--danger);
+  border-color: var(--danger);
+  background: rgba(255, 68, 102, 0.1);
+  animation: rec-pulse 1.5s ease-in-out infinite;
+}
+@keyframes rec-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(255, 68, 102, 0.4); }
+  50% { box-shadow: 0 0 0 6px rgba(255, 68, 102, 0); }
+}
 
 /* ── Reduced Motion (#18) ────────────────────────────────── */
 

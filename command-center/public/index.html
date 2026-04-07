@@ -118,9 +118,54 @@
         <div class="detail-label">Category</div>
         <div id="detail-category" class="detail-category-val"></div>
       </div>
+      <div class="detail-section" id="detail-metrics-section">
+        <div class="detail-label">Activity (last 7 days)</div>
+        <div id="detail-metrics" class="detail-metrics"></div>
+      </div>
       <div style="display:flex;gap:8px;margin-top:auto">
         <button id="detail-inspect" class="detail-launch-btn" style="flex:1;background:transparent;border-color:var(--border-hover);color:var(--text-secondary)">Inspect Files</button>
         <button id="detail-launch" class="detail-launch-btn" style="flex:1">Launch</button>
+      </div>
+    </div>
+
+    <!-- Skill Execution (B4 #11) -->
+    <div id="skillexec-overlay" class="modal-overlay" onclick="if(event.target===this)closeSkillExec()">
+      <div class="modal-content" style="max-width:680px;width:90%" onclick="event.stopPropagation()">
+        <h3 id="skillexec-title"></h3>
+        <p class="modal-subtitle">Optional arguments (space-separated)</p>
+        <input id="skillexec-args" type="text" placeholder="e.g. --verbose input.txt" class="palette-input" style="border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px 14px;font-size:13px;width:100%;margin-top:8px">
+        <div style="display:flex;gap:8px;margin-top:10px">
+          <button class="detail-launch-btn" onclick="closeSkillExec()" style="flex:1;background:transparent;border-color:var(--border-hover);color:var(--text-secondary)">Cancel</button>
+          <button id="skillexec-run" class="detail-launch-btn" onclick="runSkill()" style="flex:1">Run Skill</button>
+        </div>
+        <pre id="skillexec-output" class="inspector-view" style="display:none;margin-top:14px;max-height:340px;border-radius:var(--radius-sm);border:1px solid var(--border)"></pre>
+      </div>
+    </div>
+
+    <!-- Today's Digest (B4 #5) -->
+    <div id="digest-overlay" class="modal-overlay" onclick="if(event.target===this)closeDigest()">
+      <div class="modal-content" style="max-width:560px;width:90%" onclick="event.stopPropagation()">
+        <h3>Today's Activity</h3>
+        <p class="modal-subtitle" id="digest-date"></p>
+        <div id="digest-content" style="margin-top:14px;display:flex;flex-direction:column;gap:14px"></div>
+      </div>
+    </div>
+
+    <!-- Session History Search (B4 #2) -->
+    <div id="history-search-overlay" class="inspector-overlay">
+      <div class="inspector-panel" style="max-height:600px">
+        <div class="inspector-header">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+          <div>
+            <div class="inspector-name">Session History Search</div>
+            <div class="inspector-sub">FULL-TEXT SEARCH</div>
+          </div>
+          <button class="detail-close" onclick="closeHistorySearch()">&#215;</button>
+        </div>
+        <div style="padding:14px 24px;border-bottom:1px solid var(--border)">
+          <input id="history-search-input" type="text" placeholder="Search across all session logs..." class="palette-input" style="border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px 14px;font-size:13px;width:100%">
+        </div>
+        <div id="history-search-results" class="inspector-body" style="overflow-y:auto;flex-direction:column;padding:12px"></div>
       </div>
     </div>
 
@@ -159,10 +204,27 @@
             </div>
           </div>
           <div>
+            <div class="detail-label">Custom Accent Color</div>
+            <div style="display:flex;align-items:center;gap:10px;margin-top:6px">
+              <input type="color" id="settings-accent" value="#7c4dff" onchange="setCustomAccent(this.value)" style="width:40px;height:40px;border:none;border-radius:var(--radius-xs);cursor:pointer;background:transparent">
+              <button class="settings-theme-btn" onclick="resetCustomAccent()" style="flex:none;padding:8px 14px">Reset</button>
+            </div>
+          </div>
+          <div>
             <div class="detail-label">Notifications</div>
             <label style="display:flex;align-items:center;gap:8px;margin-top:6px;font-size:13px;color:var(--text-secondary);cursor:pointer">
               <input type="checkbox" id="settings-notifications" onchange="toggleNotifications(this.checked)"> Browser notifications when sessions end
             </label>
+          </div>
+          <div>
+            <div class="detail-label">Outgoing Webhooks</div>
+            <textarea id="settings-webhooks" rows="3" placeholder="https://example.com/hook (one per line)" style="margin-top:6px;width:100%;padding:8px 12px;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--bg-surface);color:var(--text);font-family:var(--font-mono);font-size:11px;outline:none;resize:vertical"></textarea>
+            <button class="settings-theme-btn" onclick="saveWebhooks()" style="margin-top:6px">Save Webhooks</button>
+          </div>
+          <div>
+            <div class="detail-label">Webhook Receiver Secret</div>
+            <code id="settings-webhook-secret" style="display:block;margin-top:6px;font-size:11px;padding:8px 12px;background:var(--bg-surface);border-radius:var(--radius-xs);color:var(--text-muted);user-select:all">loading...</code>
+            <div style="font-size:10px;color:var(--text-dim);margin-top:4px">POST to /api/webhooks/{secret}/{agent} with {"prompt": "..."}</div>
           </div>
         </div>
       </div>
@@ -278,6 +340,8 @@
           <span id="breadcrumb-topic" class="breadcrumb-topic"></span>
         </nav>
         <div class="terminal-actions">
+          <button class="icon-btn" id="voice-btn" onclick="toggleVoiceInput()" title="Voice input"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"/><path d="M19 10v2a7 7 0 01-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg></button>
+          <button class="icon-btn" onclick="shareCurrentSession()" title="Share session"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg></button>
           <button class="icon-btn" onclick="toggleTerminalSearch()" title="Search (Ctrl+F)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg></button>
           <button class="icon-btn" id="autoscroll-btn" onclick="toggleAutoScroll()" title="Auto-scroll"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12l7 7 7-7"/></svg></button>
           <button class="icon-btn" onclick="exportSession()" title="Export output"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg></button>
