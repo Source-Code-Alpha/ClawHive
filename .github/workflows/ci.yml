@@ -1,0 +1,81 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+
+jobs:
+  validate:
+    name: Validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Check command center TypeScript syntax
+        run: |
+          cd command-center
+          npm install --no-audit --no-fund typescript @types/node @types/express @types/ws
+          npx tsc --noEmit --skipLibCheck server/*.ts || echo "TypeScript check failed (informational)"
+        continue-on-error: true
+
+      - name: Validate JSON files
+        run: |
+          for f in $(find . -name "*.json" -not -path "*/node_modules/*"); do
+            echo "Checking $f"
+            node -e "JSON.parse(require('fs').readFileSync('$f', 'utf8'))" || exit 1
+          done
+
+      - name: Check shell script syntax
+        run: |
+          for f in $(find scripts/ -name "*.sh"); do
+            echo "Checking $f"
+            bash -n "$f" || exit 1
+          done
+
+      - name: Verify required files exist
+        run: |
+          test -f README.md
+          test -f LICENSE
+          test -f CONTRIBUTING.md
+          test -f TROUBLESHOOTING.md
+          test -f docs/day-in-the-life.md
+          test -f docs/architecture.md
+          test -f docs/creating-agents.md
+          test -d agents
+          test -d command-center/server
+          test -d command-center/public
+          test -f command-center/server/index.ts
+          test -f command-center/server/sessions.ts
+          test -f command-center/server/agents.ts
+          test -f command-center/server/workspace.ts
+          test -f command-center/public/index.html
+          test -f command-center/public/css/style.css
+          test -f command-center/public/js/dashboard.js
+          echo "All required files present"
+
+      - name: Verify all 8 starter agents have required files
+        run: |
+          for agent in coding researcher social life prompter designer auditor finance; do
+            for file in CLAUDE.md IDENTITY.md SOUL.md AGENTS.md MEMORY.md; do
+              if [ ! -f "agents/$agent/$file" ]; then
+                echo "MISSING: agents/$agent/$file"
+                exit 1
+              fi
+            done
+          done
+          echo "All 8 agents have all required files"
+
+      - name: Security audit — no leaked credentials
+        run: |
+          if grep -rin "sk-[a-zA-Z0-9]\{20,\}" --include="*.md" --include="*.ts" --include="*.js" --include="*.json" .; then
+            echo "Found potential API keys"
+            exit 1
+          fi
+          echo "No leaked credentials found"

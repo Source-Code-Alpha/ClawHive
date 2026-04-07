@@ -104,6 +104,27 @@ Before running setup, make sure you have:
 
 The command center uses `node-pty`, which compiles native modules. If `npm install` fails, see [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
 
+**Run the preflight check first:**
+
+```bash
+./scripts/verify.sh        # Linux / macOS
+.\scripts\verify.ps1        # Windows
+```
+
+It checks Node version, Claude CLI, build tools, ports, and disk space — and tells you what is missing before you waste time on a failed install.
+
+### Skip the install — run the dashboard in Docker
+
+If you do not want to deal with `node-pty` build issues, run the command center as a container:
+
+```bash
+cd command-center
+docker compose up -d
+# Open http://localhost:3096
+```
+
+Edit `docker-compose.yml` to point at your agent workspaces. Container ships with the Claude Code CLI pre-installed.
+
 ### 3. Launch an Agent
 
 ```bash

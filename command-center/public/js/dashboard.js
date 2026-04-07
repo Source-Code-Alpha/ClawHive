@@ -12,6 +12,48 @@ let pinnedAgents = JSON.parse(localStorage.getItem('pinnedAgents') || '[]');
 let currentSort = localStorage.getItem('agentSort') || 'name';
 let viewMode = localStorage.getItem('viewMode') || 'grid';
 
+// ── Auth (Bearer token) ────────────────────────────────────────
+let authToken = localStorage.getItem('clawhiveToken') || '';
+let authRequired = false;
+
+// Wrap fetch to inject Authorization header when a token is set
+const _origFetch = window.fetch.bind(window);
+window.fetch = function (url, opts = {}) {
+  if (authToken) {
+    opts.headers = { ...(opts.headers || {}), Authorization: `Bearer ${authToken}` };
+  }
+  return _origFetch(url, opts);
+};
+
+async function checkAuth() {
+  try {
+    const res = await _origFetch('/api/auth');
+    const data = await res.json();
+    authRequired = !!data.authRequired;
+    if (authRequired && !authToken) {
+      promptForToken();
+    }
+  } catch {}
+}
+
+function promptForToken() {
+  const t = prompt('This ClawHive instance requires a token. Enter Bearer token:');
+  if (t) {
+    authToken = t.trim();
+    localStorage.setItem('clawhiveToken', authToken);
+    location.reload();
+  }
+}
+
+function clearToken() {
+  authToken = '';
+  localStorage.removeItem('clawhiveToken');
+  location.reload();
+}
+
+// Run auth check on init
+checkAuth();
+
 // ── XSS Protection (#11) ────────────────────────────────────────
 function esc(str) {
   const d = document.createElement('div');
@@ -462,6 +504,8 @@ function createTerminal(sessionId, agentId, topic) {
       // Track last data time for status indicator (#6)
       const entry = terminals.get(sessionId);
       if (entry) entry.lastDataTime = Date.now();
+      // TTS — speak new output if enabled and this is the focused session
+      if (sessionId === currentSessionId) ttsHandleData(e.data);
     };
 
     ws.onclose = () => {
@@ -732,6 +776,77 @@ function toggleVoiceInput() {
     } catch {}
   }
 }
+
+// ── Voice Output / TTS (post-launch polish) ─────────────────────
+let ttsEnabled = localStorage.getItem('ttsEnabled') === 'true';
+let ttsBuffer = '';
+let ttsFlushTimer = null;
+
+function toggleTTS() {
+  if (!('speechSynthesis' in window)) {
+    showToast('Text-to-speech not supported in this browser', 'error');
+    return;
+  }
+  ttsEnabled = !ttsEnabled;
+  localStorage.setItem('ttsEnabled', String(ttsEnabled));
+  document.getElementById('tts-btn')?.classList.toggle('active', ttsEnabled);
+  if (ttsEnabled) {
+    showToast('Text-to-speech ON — terminal output will be spoken', 'success');
+  } else {
+    speechSynthesis.cancel();
+    ttsBuffer = '';
+    showToast('Text-to-speech OFF', 'info');
+  }
+}
+
+// Apply saved state on load
+document.addEventListener('DOMContentLoaded', () => {
+  if (ttsEnabled) document.getElementById('tts-btn')?.classList.add('active');
+});
+
+// Strip ANSI codes and control characters from text before speaking
+function ttsClean(text) {
+  return text
+    .replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '')  // ANSI escape codes
+    .replace(/[\x00-\x09\x0b-\x1f\x7f]/g, '') // control chars except newline
+    .replace(/[│├└─━╭╮╯╰┃╔╗╚╝═║]/g, '')      // box drawing
+    .trim();
+}
+
+function speakChunk(text) {
+  if (!ttsEnabled || !text) return;
+  const utterance = new SpeechSynthesisUtterance(text);
+  utterance.rate = 1.1;
+  utterance.pitch = 1.0;
+  utterance.volume = 0.9;
+  speechSynthesis.speak(utterance);
+}
+
+function ttsHandleData(data) {
+  if (!ttsEnabled) return;
+  ttsBuffer += data;
+  if (ttsFlushTimer) clearTimeout(ttsFlushTimer);
+  // Flush on a complete line OR after 800ms of silence
+  const newlineIdx = ttsBuffer.lastIndexOf('\n');
+  if (newlineIdx > 0) {
+    const toSpeak = ttsClean(ttsBuffer.slice(0, newlineIdx));
+    ttsBuffer = ttsBuffer.slice(newlineIdx + 1);
+    if (toSpeak.length > 3) speakChunk(toSpeak);
+  }
+  ttsFlushTimer = setTimeout(() => {
+    const toSpeak = ttsClean(ttsBuffer);
+    ttsBuffer = '';
+    if (toSpeak.length > 3) speakChunk(toSpeak);
+  }, 800);
+}
+
+// Stop speaking when user clicks anywhere (let them interrupt)
+document.addEventListener('click', () => {
+  if (ttsEnabled && speechSynthesis.speaking) {
+    speechSynthesis.cancel();
+    ttsBuffer = '';
+  }
+}, true);
 
 // ── Skill Execution (B4 #11) ────────────────────────────────────
 let executingSkill = null;
@@ -1318,13 +1433,15 @@ function renderSkills(list) {
     nameSpan.style.cssText = 'flex:1;overflow:hidden;text-overflow:ellipsis';
     el.appendChild(nameSpan);
     el.title = s.description || '';
-    if (s.hasScripts) {
-      const runBtn = document.createElement('button');
-      runBtn.textContent = 'Run';
-      runBtn.style.cssText = 'background:var(--accent-soft);border:1px solid var(--border-active);color:var(--accent);padding:2px 8px;border-radius:4px;cursor:pointer;font-size:10px;font-family:var(--font-mono)';
-      runBtn.addEventListener('click', (e) => { e.stopPropagation(); openSkillExec(s.id, s.name); });
-      el.appendChild(runBtn);
-    }
+    // Run button — works for both script-based and markdown-only skills
+    const runBtn = document.createElement('button');
+    runBtn.textContent = s.hasScripts ? 'Run' : 'Run as prompt';
+    runBtn.style.cssText = 'background:var(--accent-soft);border:1px solid var(--border-active);color:var(--accent);padding:2px 8px;border-radius:4px;cursor:pointer;font-size:10px;font-family:var(--font-mono);white-space:nowrap';
+    runBtn.title = s.hasScripts
+      ? 'Execute the skill\'s script'
+      : 'Send SKILL.md as a prompt template to a one-shot Claude session';
+    runBtn.addEventListener('click', (e) => { e.stopPropagation(); openSkillExec(s.id, s.name); });
+    el.appendChild(runBtn);
     el.addEventListener('click', async () => {
       document.querySelectorAll('#skills-list .inspector-list-item').forEach(i => i.classList.remove('active'));
       el.classList.add('active');

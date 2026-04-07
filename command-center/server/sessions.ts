@@ -342,8 +342,11 @@ export function getActiveSessionIds(): Set<string> {
 }
 
 // ── Quick Chat (B3 #7) — One-shot prompt to an agent ───────────
+// Two-phase: (1) wait for Claude to be ready for input, (2) send prompt and
+// wait for response to stabilize. Uses output silence as the readiness signal
+// since Claude prints its prompt then idles.
 
-export async function quickChat(agentId: string, prompt: string, timeoutMs = 60_000): Promise<string> {
+export async function quickChat(agentId: string, prompt: string, timeoutMs = 90_000): Promise<string> {
   return new Promise((resolve) => {
     const workspace = path.join(os.homedir(), `${process.env.WORKSPACE_PREFIX || "clawd-"}${agentId}`);
     const claudeBin = process.env.CLAUDE_BIN || "claude";
@@ -353,10 +356,20 @@ export async function quickChat(agentId: string, prompt: string, timeoutMs = 60_
       return;
     }
 
-    let output = "";
-    let stableTimer: ReturnType<typeof setTimeout> | null = null;
+    // Phase tracking
+    let phase: "booting" | "sent" | "responding" = "booting";
+    let bootBuffer = "";        // Output during boot phase (discarded)
+    let responseBuffer = "";    // Output after prompt is sent (kept)
     let killed = false;
-    let started = false;
+    let lastDataAt = Date.now();
+
+    let bootIdleTimer: ReturnType<typeof setTimeout> | null = null;
+    let responseIdleTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const BOOT_IDLE_MS = 1500;       // Claude is "ready" after 1.5s of silence post-boot
+    const MIN_BOOT_BYTES = 50;       // Don't consider boot complete until we've seen something
+    const RESPONSE_IDLE_MS = 4000;   // Response is "complete" after 4s of silence
+    const MIN_RESPONSE_BYTES = 20;   // Don't return empty responses
 
     const pty = spawn(claudeBin, ["--dangerously-skip-permissions"], {
       name: "xterm-256color",
@@ -369,50 +382,86 @@ export async function quickChat(agentId: string, prompt: string, timeoutMs = 60_
     const cleanup = (text: string) => {
       if (killed) return;
       killed = true;
-      if (stableTimer) clearTimeout(stableTimer);
+      if (bootIdleTimer) clearTimeout(bootIdleTimer);
+      if (responseIdleTimer) clearTimeout(responseIdleTimer);
+      clearTimeout(hardTimer);
       try { pty.kill(); } catch {}
-      resolve(text);
+      // Strip ANSI and trim leading boot artifacts
+      const cleaned = stripAnsi(text).trim();
+      resolve(cleaned || "(empty response — agent did not reply)");
     };
 
-    // Hard timeout
-    const hardTimer = setTimeout(() => cleanup(stripAnsi(output) + "\n\n[Timed out]"), timeoutMs);
+    const sendPrompt = () => {
+      if (phase !== "booting" || killed) return;
+      phase = "sent";
+      pty.write(prompt + "\r");
+      // Reset response capture
+      responseBuffer = "";
+      lastDataAt = Date.now();
+    };
+
+    const checkBootIdle = () => {
+      if (phase !== "booting" || killed) return;
+      const idleMs = Date.now() - lastDataAt;
+      if (idleMs >= BOOT_IDLE_MS && bootBuffer.length >= MIN_BOOT_BYTES) {
+        sendPrompt();
+      } else {
+        bootIdleTimer = setTimeout(checkBootIdle, 500);
+      }
+    };
+
+    const checkResponseIdle = () => {
+      if (phase === "booting" || killed) return;
+      const idleMs = Date.now() - lastDataAt;
+      if (idleMs >= RESPONSE_IDLE_MS && responseBuffer.length >= MIN_RESPONSE_BYTES) {
+        cleanup(responseBuffer);
+      } else {
+        responseIdleTimer = setTimeout(checkResponseIdle, 500);
+      }
+    };
+
+    // Hard timeout — fail-safe
+    const hardTimer = setTimeout(() => {
+      const captured = phase === "booting" ? bootBuffer : responseBuffer;
+      cleanup(captured + "\n\n[Quick chat timed out — agent took too long]");
+    }, timeoutMs);
 
     pty.onData((data: string) => {
-      output += data;
-
-      // Wait for boot to complete (look for prompt indicator), then send prompt
-      if (!started && output.length > 100) {
-        // Heuristic: send prompt after 2.5s of buffer growth
-        setTimeout(() => {
-          if (!killed && !started) {
-            started = true;
-            pty.write(prompt + "\r");
-            output = ""; // Reset to capture only the response
-          }
-        }, 2500);
-        started = true; // Mark to prevent multiple triggers
+      lastDataAt = Date.now();
+      if (phase === "booting") {
+        bootBuffer += data;
+        // Start polling for boot idle once we've seen some output
+        if (!bootIdleTimer && bootBuffer.length >= MIN_BOOT_BYTES) {
+          bootIdleTimer = setTimeout(checkBootIdle, BOOT_IDLE_MS);
+        }
+      } else {
+        // phase === "sent" or "responding"
+        if (phase === "sent") phase = "responding";
+        responseBuffer += data;
+        // Start/restart the response idle check
+        if (responseIdleTimer) clearTimeout(responseIdleTimer);
+        responseIdleTimer = setTimeout(checkResponseIdle, RESPONSE_IDLE_MS);
       }
-
-      // Reset stable timer on every data chunk (response still streaming)
-      if (stableTimer) clearTimeout(stableTimer);
-      // After 3 seconds of silence, consider response complete
-      stableTimer = setTimeout(() => {
-        clearTimeout(hardTimer);
-        cleanup(stripAnsi(output));
-      }, 3000);
     });
 
     pty.onExit(() => {
-      clearTimeout(hardTimer);
-      if (stableTimer) clearTimeout(stableTimer);
-      if (!killed) cleanup(stripAnsi(output));
+      if (killed) return;
+      // PTY died — return whatever we have
+      const captured = phase === "booting"
+        ? `(Agent exited during boot — may indicate setup issue)\n\n${bootBuffer}`
+        : responseBuffer;
+      cleanup(captured);
     });
   });
 }
 
 // ── Skill Execution (B4 #11) ───────────────────────────────────
+// Supports two modes:
+// 1. Script-based: scripts/{run.sh|run.py|run.js|run.ts} runs as a subprocess
+// 2. Markdown-only: SKILL.md is sent as a system prompt to a one-shot Claude
+//    session, with `args` as the user prompt. This makes EVERY skill executable.
 
-export async function executeSkill(skillId: string, args: string = "", timeoutMs = 60_000): Promise<string> {
+export async function executeSkill(skillId: string, args: string = "", timeoutMs = 90_000): Promise<string> {
   return new Promise((resolve) => {
     const skillPath = path.join(os.homedir(), `${process.env.WORKSPACE_PREFIX || "clawd-"}shared`, "skills", skillId);
     const skillMd = path.join(skillPath, "SKILL.md");
@@ -422,15 +471,92 @@ export async function executeSkill(skillId: string, args: string = "", timeoutMs
       return;
     }
 
-    // Read skill content as documentation, plus check for runnable scripts
     const scriptsDir = path.join(skillPath, "scripts");
-    if (!fs.existsSync(scriptsDir)) {
-      // No scripts - just return the SKILL.md
-      try {
-        resolve(fs.readFileSync(skillMd, "utf-8"));
-      } catch {
-        resolve("Failed to read skill");
+    const hasScripts = fs.existsSync(scriptsDir);
+
+    // ─── Markdown-only skills: run as a Claude prompt template ───
+    if (!hasScripts) {
+      let skillContent = "";
+      try { skillContent = fs.readFileSync(skillMd, "utf-8"); } catch {
+        resolve("Failed to read SKILL.md");
+        return;
       }
+
+      const claudeBin = process.env.CLAUDE_BIN || "claude";
+      // Spawn Claude in the skill directory with no special permissions
+      const userPrompt = args.trim() || "Apply this skill to a sample task and show me the structured output.";
+      const composedPrompt = `# Skill in use\n\n${skillContent}\n\n---\n\n# Task\n\n${userPrompt}\n\nApply the methodology above to this task and return your output following any format the skill specifies.`;
+
+      const pty = spawn(claudeBin, ["--dangerously-skip-permissions"], {
+        name: "xterm-256color",
+        cols: 120,
+        rows: 30,
+        cwd: skillPath,
+        env: { ...process.env, TERM: "xterm-256color" } as Record<string, string>,
+      });
+
+      let output = "";
+      let killed = false;
+      let phase: "booting" | "responding" = "booting";
+      let lastDataAt = Date.now();
+      let bootIdleTimer: ReturnType<typeof setTimeout> | null = null;
+      let responseIdleTimer: ReturnType<typeof setTimeout> | null = null;
+
+      const cleanup = (text: string) => {
+        if (killed) return;
+        killed = true;
+        if (bootIdleTimer) clearTimeout(bootIdleTimer);
+        if (responseIdleTimer) clearTimeout(responseIdleTimer);
+        clearTimeout(hardTimer);
+        try { pty.kill(); } catch {}
+        resolve(stripAnsi(text).trim() || "(no output from skill)");
+      };
+
+      const sendPrompt = () => {
+        if (phase !== "booting" || killed) return;
+        phase = "responding";
+        pty.write(composedPrompt + "\r");
+        output = "";
+        lastDataAt = Date.now();
+      };
+
+      const checkBootIdle = () => {
+        if (phase !== "booting" || killed) return;
+        if (Date.now() - lastDataAt >= 1500) {
+          sendPrompt();
+        } else {
+          bootIdleTimer = setTimeout(checkBootIdle, 500);
+        }
+      };
+
+      const checkResponseIdle = () => {
+        if (phase !== "responding" || killed) return;
+        if (Date.now() - lastDataAt >= 4000 && output.length >= 20) {
+          cleanup(output);
+        } else {
+          responseIdleTimer = setTimeout(checkResponseIdle, 500);
+        }
+      };
+
+      const hardTimer = setTimeout(() => cleanup(output + "\n\n[Skill execution timed out]"), timeoutMs);
+
+      pty.onData((data: string) => {
+        lastDataAt = Date.now();
+        output += data;
+        if (phase === "booting") {
+          if (!bootIdleTimer && output.length >= 50) {
+            bootIdleTimer = setTimeout(checkBootIdle, 1500);
+          }
+        } else {
+          if (responseIdleTimer) clearTimeout(responseIdleTimer);
+          responseIdleTimer = setTimeout(checkResponseIdle, 4000);
+        }
+      });
+
+      pty.onExit(() => {
+        if (!killed) cleanup(output);
+      });
+
       return;
     }
 

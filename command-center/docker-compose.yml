@@ -1,0 +1,33 @@
+# ClawHive Command Center — docker-compose
+# Run with: docker compose up -d
+
+services:
+  clawhive:
+    build: .
+    image: clawhive/command-center:latest
+    container_name: clawhive
+    restart: unless-stopped
+    ports:
+      - "3096:3096"
+    environment:
+      # Optional bearer token — uncomment and set to enable auth
+      # CLAWHIVE_TOKEN: "your-secret-token-here"
+      PORT: 3096
+      WORKSPACE_PREFIX: clawd-
+      MAX_SESSIONS: 8
+      IDLE_TIMEOUT: 1800
+    volumes:
+      # Persist session history
+      - clawhive-history:/data/history
+      # Mount your agent workspaces — adjust path to match your setup
+      - ~/clawd-coding:/root/clawd-coding
+      - ~/clawd-researcher:/root/clawd-researcher
+      - ~/clawd-social:/root/clawd-social
+      - ~/clawd-life:/root/clawd-life
+      - ~/clawd-prompter:/root/clawd-prompter
+      - ~/clawd-designer:/root/clawd-designer
+      - ~/clawd-auditor:/root/clawd-auditor
+      - ~/clawd-finance:/root/clawd-finance
+
+volumes:
+  clawhive-history:
