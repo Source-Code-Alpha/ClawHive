@@ -41,7 +41,7 @@ function stripAnsi(str: string): string {
 }
 
 function updateCurrentTask(agentId: string, status: "running" | "ended", summary?: string) {
-  const workspace = path.join(os.homedir(), `clawd-${agentId}`);
+  const workspace = path.join(os.homedir(), `${process.env.WORKSPACE_PREFIX || "clawd-"}${agentId}`);
   const taskFile = path.join(workspace, "CURRENT_TASK.md");
   const now = new Date().toISOString();
 
@@ -86,7 +86,7 @@ export function createSession(
   const activeCount = [...sessions.values()].filter((s) => s.alive).length;
   if (activeCount >= MAX_SESSIONS) return null;
 
-  const workspace = path.join(os.homedir(), `clawd-${agentId}`);
+  const workspace = path.join(os.homedir(), `${process.env.WORKSPACE_PREFIX || "clawd-"}${agentId}`);
   const claudeBin = process.env.CLAUDE_BIN || "claude";
 
   const pty = spawn(claudeBin, ["--dangerously-skip-permissions"], {
@@ -309,6 +309,7 @@ export function listSessions(): Array<{
     createdAt: s.createdAt.toISOString(),
     lastActivity: s.lastActivity.toISOString(),
     historyFile: s.historyFile,
+    pinned: pinnedSessions.has(s.id),
   }));
 }
 
@@ -319,6 +320,99 @@ export function getActiveSessionIds(): Set<string> {
   }
   return ids;
 }
+
+// ── Quick Chat (B3 #7) — One-shot prompt to an agent ───────────
+
+export async function quickChat(agentId: string, prompt: string, timeoutMs = 60_000): Promise<string> {
+  return new Promise((resolve) => {
+    const workspace = path.join(os.homedir(), `${process.env.WORKSPACE_PREFIX || "clawd-"}${agentId}`);
+    const claudeBin = process.env.CLAUDE_BIN || "claude";
+
+    if (!fs.existsSync(workspace)) {
+      resolve(`Error: workspace not found for ${agentId}`);
+      return;
+    }
+
+    let output = "";
+    let stableTimer: ReturnType<typeof setTimeout> | null = null;
+    let killed = false;
+    let started = false;
+
+    const pty = spawn(claudeBin, ["--dangerously-skip-permissions"], {
+      name: "xterm-256color",
+      cols: 120,
+      rows: 30,
+      cwd: workspace,
+      env: { ...process.env, TERM: "xterm-256color" } as Record<string, string>,
+    });
+
+    const cleanup = (text: string) => {
+      if (killed) return;
+      killed = true;
+      if (stableTimer) clearTimeout(stableTimer);
+      try { pty.kill(); } catch {}
+      resolve(text);
+    };
+
+    // Hard timeout
+    const hardTimer = setTimeout(() => cleanup(stripAnsi(output) + "\n\n[Timed out]"), timeoutMs);
+
+    pty.onData((data: string) => {
+      output += data;
+
+      // Wait for boot to complete (look for prompt indicator), then send prompt
+      if (!started && output.length > 100) {
+        // Heuristic: send prompt after 2.5s of buffer growth
+        setTimeout(() => {
+          if (!killed && !started) {
+            started = true;
+            pty.write(prompt + "\r");
+            output = ""; // Reset to capture only the response
+          }
+        }, 2500);
+        started = true; // Mark to prevent multiple triggers
+      }
+
+      // Reset stable timer on every data chunk (response still streaming)
+      if (stableTimer) clearTimeout(stableTimer);
+      // After 3 seconds of silence, consider response complete
+      stableTimer = setTimeout(() => {
+        clearTimeout(hardTimer);
+        cleanup(stripAnsi(output));
+      }, 3000);
+    });
+
+    pty.onExit(() => {
+      clearTimeout(hardTimer);
+      if (stableTimer) clearTimeout(stableTimer);
+      if (!killed) cleanup(stripAnsi(output));
+    });
+  });
+}
+
+// ── Bulk Operations (B3 #9) ────────────────────────────────────
+
+export function killAllSessions(idleOnly = false): number {
+  let count = 0;
+  const now = Date.now();
+  for (const [id, session] of sessions) {
+    if (idleOnly) {
+      const idleMs = now - session.lastActivity.getTime();
+      if (idleMs < 300_000) continue; // skip if active in last 5min
+    }
+    killSession(id);
+    count++;
+  }
+  return count;
+}
+
+// ── Session Pinning (B3 #10) ──────────────────────────────────
+
+const pinnedSessions = new Set<string>();
+
+export function pinSession(id: string): void { pinnedSessions.add(id); }
+export function unpinSession(id: string): void { pinnedSessions.delete(id); }
+export function isPinned(id: string): boolean { return pinnedSessions.has(id); }
 
 // ── Server Stats (#16) ──────────────────────────────────────────
 
@@ -343,6 +437,7 @@ if (IDLE_TIMEOUT > 0) {
     const now = Date.now();
     for (const [id, session] of sessions) {
       if (!session.alive) continue;
+      if (pinnedSessions.has(id)) continue; // Skip pinned (B3 #10)
       const idleMs = now - session.lastActivity.getTime();
       if (idleMs > IDLE_TIMEOUT) {
         console.log(`[session] Idle timeout: ${id} (idle ${Math.round(idleMs / 60000)}m)`);

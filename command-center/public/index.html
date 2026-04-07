@@ -48,8 +48,12 @@
       </div>
       <div class="header-right">
         <div class="header-controls">
+          <button class="icon-btn" title="Topics" onclick="openTopics()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg></button>
+          <button class="icon-btn" title="Skills" onclick="openSkills()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg></button>
+          <button class="icon-btn" title="Activity" onclick="toggleActivityFeed()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg></button>
           <button class="icon-btn" id="view-toggle" title="Toggle compact view" onclick="toggleViewMode()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M3 12h18M3 18h18"/></svg></button>
           <button class="icon-btn" id="theme-toggle" title="Cycle theme" onclick="cycleTheme()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 0 0 18V3z" fill="currentColor"/></svg></button>
+          <button class="icon-btn" title="Settings" onclick="openSettings()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg></button>
         </div>
         <div class="session-counter">
           <span class="pulse-dot"></span>
@@ -114,7 +118,152 @@
         <div class="detail-label">Category</div>
         <div id="detail-category" class="detail-category-val"></div>
       </div>
-      <button id="detail-launch" class="detail-launch-btn">Launch Session</button>
+      <div style="display:flex;gap:8px;margin-top:auto">
+        <button id="detail-inspect" class="detail-launch-btn" style="flex:1;background:transparent;border-color:var(--border-hover);color:var(--text-secondary)">Inspect Files</button>
+        <button id="detail-launch" class="detail-launch-btn" style="flex:1">Launch</button>
+      </div>
+    </div>
+
+    <!-- Onboarding Tour (B3 #13) -->
+    <div id="tour-overlay" class="tour-overlay">
+      <div class="tour-card">
+        <div class="tour-step" id="tour-step-num">Step 1 of 5</div>
+        <h2 id="tour-title"></h2>
+        <p id="tour-text"></p>
+        <div class="tour-actions">
+          <button class="tour-btn secondary" onclick="skipTour()">Skip</button>
+          <button class="tour-btn" id="tour-next" onclick="nextTourStep()">Next</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Settings Panel (B3 #20) -->
+    <div id="settings-overlay" class="modal-overlay" onclick="if(event.target===this)closeSettings()">
+      <div class="modal-content" style="max-width:480px;width:90%" onclick="event.stopPropagation()">
+        <h3>Settings</h3>
+        <p class="modal-subtitle">Customize your command center</p>
+        <div style="display:flex;flex-direction:column;gap:14px;margin-top:14px">
+          <div>
+            <div class="detail-label">Theme</div>
+            <div style="display:flex;gap:6px;margin-top:6px">
+              <button class="settings-theme-btn" data-theme="midnight" onclick="applyTheme('midnight')">Midnight</button>
+              <button class="settings-theme-btn" data-theme="ocean" onclick="applyTheme('ocean')">Ocean</button>
+              <button class="settings-theme-btn" data-theme="obsidian" onclick="applyTheme('obsidian')">Obsidian</button>
+            </div>
+          </div>
+          <div>
+            <div class="detail-label">View Mode</div>
+            <div style="display:flex;gap:6px;margin-top:6px">
+              <button class="settings-theme-btn" onclick="if(viewMode!=='grid')toggleViewMode()">Grid</button>
+              <button class="settings-theme-btn" onclick="if(viewMode!=='compact')toggleViewMode()">Compact</button>
+            </div>
+          </div>
+          <div>
+            <div class="detail-label">Notifications</div>
+            <label style="display:flex;align-items:center;gap:8px;margin-top:6px;font-size:13px;color:var(--text-secondary);cursor:pointer">
+              <input type="checkbox" id="settings-notifications" onchange="toggleNotifications(this.checked)"> Browser notifications when sessions end
+            </label>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Quick Chat Modal (B3 #7) -->
+    <div id="quickchat-overlay" class="modal-overlay" onclick="if(event.target===this)closeQuickChat()">
+      <div class="modal-content" style="max-width:600px;width:90%" onclick="event.stopPropagation()">
+        <h3 id="quickchat-title"></h3>
+        <p class="modal-subtitle">One-shot prompt — get an inline response without a full session</p>
+        <textarea id="quickchat-input" class="prompt-textarea" placeholder="Ask a quick question..." rows="3" style="margin-top:10px"></textarea>
+        <div style="display:flex;gap:8px;margin-top:10px">
+          <button class="detail-launch-btn" onclick="closeQuickChat()" style="flex:1;background:transparent;border-color:var(--border-hover);color:var(--text-secondary)">Cancel</button>
+          <button id="quickchat-send" class="detail-launch-btn" onclick="sendQuickChat()" style="flex:1">Send</button>
+        </div>
+        <div id="quickchat-response" class="inspector-view" style="display:none;margin-top:14px;max-height:300px;border-radius:var(--radius-sm);border:1px solid var(--border)"></div>
+      </div>
+    </div>
+
+    <!-- Topic Browser (#4) -->
+    <div id="topics-overlay" class="inspector-overlay">
+      <div class="inspector-panel">
+        <div class="inspector-header">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg>
+          <div>
+            <div class="inspector-name">Topics</div>
+            <div class="inspector-sub" id="topics-count"></div>
+          </div>
+          <button class="detail-close" onclick="closeTopics()">&#215;</button>
+        </div>
+        <div style="padding:12px 24px;border-bottom:1px solid var(--border)">
+          <input id="topics-search" type="text" placeholder="Search topics..." class="palette-input" style="border:1px solid var(--border);border-radius:var(--radius-sm);padding:8px 12px;font-size:13px">
+        </div>
+        <div id="topics-list" class="inspector-body" style="overflow-y:auto;flex-direction:column;padding:12px"></div>
+      </div>
+    </div>
+
+    <!-- Skills Catalog (#5) -->
+    <div id="skills-overlay" class="inspector-overlay">
+      <div class="inspector-panel">
+        <div class="inspector-header">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2"><path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/></svg>
+          <div>
+            <div class="inspector-name">Skills Catalog</div>
+            <div class="inspector-sub" id="skills-count"></div>
+          </div>
+          <button class="detail-close" onclick="closeSkills()">&#215;</button>
+        </div>
+        <div style="padding:12px 24px;border-bottom:1px solid var(--border)">
+          <input id="skills-search" type="text" placeholder="Search skills..." class="palette-input" style="border:1px solid var(--border);border-radius:var(--radius-sm);padding:8px 12px;font-size:13px">
+        </div>
+        <div class="inspector-body">
+          <aside class="inspector-list" id="skills-list" style="width:280px"></aside>
+          <main class="inspector-content">
+            <div class="inspector-toolbar"><span id="skills-current">Select a skill</span></div>
+            <pre id="skills-view" class="inspector-view"></pre>
+          </main>
+        </div>
+      </div>
+    </div>
+
+    <!-- Activity Feed (#6) -->
+    <aside id="activity-feed" class="activity-feed">
+      <div class="activity-header">
+        <span style="font-weight:600;font-size:13px">Activity</span>
+        <button class="detail-close" onclick="toggleActivityFeed()">&#215;</button>
+      </div>
+      <div id="activity-list" class="activity-list"></div>
+    </aside>
+
+    <!-- Workspace Inspector (#1, #2, #3) -->
+    <div id="inspector-overlay" class="inspector-overlay">
+      <div class="inspector-panel">
+        <div class="inspector-header">
+          <span id="inspector-emoji" class="inspector-emoji"></span>
+          <div>
+            <div id="inspector-name" class="inspector-name"></div>
+            <div class="inspector-sub">Workspace Inspector</div>
+          </div>
+          <button class="detail-close" onclick="closeInspector()">&#215;</button>
+        </div>
+        <div class="inspector-tabs">
+          <button class="inspector-tab active" data-section="files" onclick="inspectorShowSection('files')">Files</button>
+          <button class="inspector-tab" data-section="memory" onclick="inspectorShowSection('memory')">Memory</button>
+          <button class="inspector-tab" data-section="topics" onclick="inspectorShowSection('topics')">Topics</button>
+        </div>
+        <div class="inspector-body">
+          <aside class="inspector-list" id="inspector-list"></aside>
+          <main class="inspector-content">
+            <div class="inspector-toolbar">
+              <span id="inspector-current"></span>
+              <div style="margin-left:auto;display:flex;gap:6px">
+                <button id="inspector-edit-btn" class="icon-btn" onclick="inspectorToggleEdit()" title="Edit (E)" style="display:none"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
+                <button id="inspector-save-btn" class="icon-btn" onclick="inspectorSave()" title="Save (Ctrl+S)" style="display:none"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg></button>
+              </div>
+            </div>
+            <pre id="inspector-view" class="inspector-view"></pre>
+            <textarea id="inspector-editor" class="inspector-editor" style="display:none"></textarea>
+          </main>
+        </div>
+      </div>
     </div>
 
     <!-- Terminal view -->

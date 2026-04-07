@@ -533,10 +533,25 @@ function switchToSession(sessionId) {
   document.getElementById('terminal-view').classList.add('active');
 
   const container = document.getElementById('terminal-container');
-  container.innerHTML = '';
-  entry.terminal.open(container);
+
+  // Hide all terminal wrappers, show only the active one
+  for (const child of container.children) {
+    child.style.display = 'none';
+  }
+
+  // Create a persistent wrapper for this terminal if it doesn't exist
+  let wrapper = container.querySelector(`[data-terminal="${CSS.escape(sessionId)}"]`);
+  if (!wrapper) {
+    wrapper = document.createElement('div');
+    wrapper.dataset.terminal = sessionId;
+    wrapper.style.cssText = 'width:100%;height:100%';
+    container.appendChild(wrapper);
+    entry.terminal.open(wrapper);
+  }
+  wrapper.style.display = '';
+
   entry.fitAddon.fit();
-  entry.resizeObserver.observe(container);
+  entry.resizeObserver.observe(wrapper);
   entry.terminal.focus();
 
   document.querySelectorAll('.session-tab').forEach(tab => {
@@ -621,6 +636,538 @@ function toggleShortcutsOverlay() {
   overlay.classList.toggle('open');
 }
 
+// ── Settings Panel (B3 #20) ─────────────────────────────────────
+function openSettings() {
+  document.getElementById('settings-notifications').checked = notificationsEnabled;
+  document.getElementById('settings-overlay').classList.add('open');
+}
+function closeSettings() {
+  document.getElementById('settings-overlay').classList.remove('open');
+}
+function toggleNotifications(enabled) {
+  notificationsEnabled = enabled;
+  localStorage.setItem('notifications', String(enabled));
+  if (enabled) requestNotifications();
+}
+
+// ── Onboarding Tour (B3 #13) ────────────────────────────────────
+const tourSteps = [
+  { title: 'Welcome to Command Center', text: 'Manage all your AI agents from one place. Let me show you around in 5 quick steps.' },
+  { title: 'Launch any agent', text: 'Click any agent card to start a session. Right-click for more options like Quick Chat or workspace inspection.' },
+  { title: 'Command Palette', text: 'Press Ctrl+K (or Cmd+K) anywhere to fuzzy-search agents, topics, and commands. The fastest way to navigate.' },
+  { title: 'Inspect & manage', text: 'Use the header buttons to browse Topics, Skills, Activity Feed, and Settings. Right-click an agent → Inspect Workspace to peek inside.' },
+  { title: 'Themes & shortcuts', text: 'Cycle themes with the moon button. Press ? anytime to see all keyboard shortcuts. Have fun!' },
+];
+let currentTourStep = 0;
+
+function startTour() {
+  currentTourStep = 0;
+  showTourStep();
+  document.getElementById('tour-overlay').classList.add('open');
+}
+
+function showTourStep() {
+  const step = tourSteps[currentTourStep];
+  document.getElementById('tour-step-num').textContent = `Step ${currentTourStep + 1} of ${tourSteps.length}`;
+  document.getElementById('tour-title').textContent = step.title;
+  document.getElementById('tour-text').textContent = step.text;
+  document.getElementById('tour-next').textContent = currentTourStep === tourSteps.length - 1 ? 'Finish' : 'Next';
+}
+
+function nextTourStep() {
+  if (currentTourStep < tourSteps.length - 1) {
+    currentTourStep++;
+    showTourStep();
+  } else {
+    skipTour();
+  }
+}
+
+function skipTour() {
+  document.getElementById('tour-overlay').classList.remove('open');
+  localStorage.setItem('tourCompleted', 'true');
+}
+
+// Show tour on first visit
+document.addEventListener('DOMContentLoaded', () => {
+  if (!localStorage.getItem('tourCompleted')) {
+    setTimeout(startTour, 1500);
+  }
+});
+
+// ── Quick Chat (B3 #7) ──────────────────────────────────────────
+let quickChatAgent = null;
+
+function openQuickChat(agentId) {
+  const agent = agents.find(a => a.id === agentId);
+  if (!agent) return;
+  quickChatAgent = agent;
+  document.getElementById('quickchat-title').textContent = `${agent.emoji} Quick Chat: ${agent.name}`;
+  document.getElementById('quickchat-input').value = '';
+  document.getElementById('quickchat-response').style.display = 'none';
+  document.getElementById('quickchat-response').textContent = '';
+  document.getElementById('quickchat-send').disabled = false;
+  document.getElementById('quickchat-overlay').classList.add('open');
+  setTimeout(() => document.getElementById('quickchat-input').focus(), 100);
+}
+
+// Multi-Agent Broadcast (B3 #17)
+function openBroadcast() {
+  // Use pinned agents if any, otherwise prompt
+  const targets = pinnedAgents.length > 0
+    ? agents.filter(a => pinnedAgents.includes(a.id))
+    : agents.slice(0, 3); // first 3 if nothing pinned
+  if (targets.length === 0) {
+    showToast('No agents to broadcast to', 'warning');
+    return;
+  }
+  quickChatAgent = { id: '*broadcast*', name: `Broadcast to ${targets.length} agents`, emoji: '📡', targets };
+  document.getElementById('quickchat-title').textContent = `📡 Broadcast: ${targets.map(t => t.name).join(', ')}`;
+  document.getElementById('quickchat-input').value = '';
+  document.getElementById('quickchat-response').style.display = 'none';
+  document.getElementById('quickchat-response').textContent = '';
+  document.getElementById('quickchat-send').disabled = false;
+  document.getElementById('quickchat-overlay').classList.add('open');
+  setTimeout(() => document.getElementById('quickchat-input').focus(), 100);
+}
+
+function closeQuickChat() {
+  document.getElementById('quickchat-overlay').classList.remove('open');
+  quickChatAgent = null;
+}
+
+async function sendQuickChat() {
+  if (!quickChatAgent) return;
+  const prompt = document.getElementById('quickchat-input').value.trim();
+  if (!prompt) return;
+  const sendBtn = document.getElementById('quickchat-send');
+  const responseEl = document.getElementById('quickchat-response');
+  sendBtn.disabled = true;
+  sendBtn.textContent = 'Thinking...';
+  responseEl.style.display = '';
+  responseEl.textContent = 'Booting agent and waiting for response...\n(this can take 30-60 seconds for the first run)';
+
+  // Multi-agent broadcast (B3 #17): if quickChatAgent is "*broadcast*"
+  if (quickChatAgent.id === '*broadcast*') {
+    const targets = quickChatAgent.targets || [];
+    let combined = '';
+    for (const target of targets) {
+      combined += `\n=== ${target.emoji} ${target.name} ===\n`;
+      try {
+        const res = await fetch('/api/quickchat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ agentId: target.id, prompt }),
+        });
+        const data = await res.json();
+        combined += (res.ok ? data.response : `Error: ${data.error}`) + '\n';
+      } catch (err) {
+        combined += `Network error: ${err.message}\n`;
+      }
+      responseEl.textContent = combined;
+    }
+    sendBtn.disabled = false;
+    sendBtn.textContent = 'Send';
+    return;
+  }
+
+  try {
+    const res = await fetch('/api/quickchat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ agentId: quickChatAgent.id, prompt }),
+    });
+    const data = await res.json();
+    if (res.ok) {
+      responseEl.textContent = data.response || '(empty response)';
+    } else {
+      responseEl.textContent = `Error: ${data.error || 'unknown'}`;
+    }
+  } catch (err) {
+    responseEl.textContent = `Network error: ${err.message}`;
+  } finally {
+    sendBtn.disabled = false;
+    sendBtn.textContent = 'Send';
+  }
+}
+
+// ── Session Pin (B3 #10) ────────────────────────────────────────
+async function toggleSessionPin(sessionId) {
+  try {
+    const entry = terminals.get(sessionId);
+    if (!entry) return;
+    const isPinnedNow = entry.pinned;
+    const method = isPinnedNow ? 'DELETE' : 'POST';
+    await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/pin`, { method });
+    entry.pinned = !isPinnedNow;
+    showToast(isPinnedNow ? 'Session unpinned' : 'Session pinned (no idle timeout)', 'info');
+  } catch {}
+}
+
+// ── Bulk Operations (B3 #9) ─────────────────────────────────────
+async function killAllSessions(idleOnly = false) {
+  if (!confirm(idleOnly ? 'Kill all idle sessions?' : 'Kill ALL sessions?')) return;
+  try {
+    const res = await fetch('/api/sessions/kill-all', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ idleOnly }),
+    });
+    const data = await res.json();
+    showToast(`Killed ${data.killed} sessions`, 'success');
+    // Close all local terminals
+    for (const [sid, entry] of terminals) {
+      if (entry.intentionallyClosed) entry.intentionallyClosed();
+      if (entry.ws) entry.ws.close();
+      if (entry.terminal) entry.terminal.dispose();
+      removeSessionTab(sid);
+    }
+    terminals.clear();
+    updateSessionCount();
+    showDashboard();
+  } catch {
+    showToast('Bulk kill failed', 'error');
+  }
+}
+
+// ── Quick Resume Last Session (B3 #11) ──────────────────────────
+let lastClosedSession = null;
+
+document.addEventListener('keydown', (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'R') {
+    e.preventDefault();
+    if (lastClosedSession) {
+      launchAgent(lastClosedSession.agentId, lastClosedSession.topic);
+      showToast('Resuming last session', 'info');
+    } else {
+      showToast('No recent session to resume', 'info');
+    }
+  }
+});
+
+// ── Topic Browser (B3 #4) ───────────────────────────────────────
+let allTopics = [];
+
+async function openTopics() {
+  document.getElementById('topics-overlay').classList.add('open');
+  try {
+    const res = await fetch('/api/topics');
+    allTopics = await res.json();
+    document.getElementById('topics-count').textContent = `${allTopics.length} TOPICS`;
+    renderTopics(allTopics);
+  } catch {
+    showToast('Failed to load topics', 'error');
+  }
+}
+
+function closeTopics() {
+  document.getElementById('topics-overlay').classList.remove('open');
+}
+
+function renderTopics(list) {
+  const container = document.getElementById('topics-list');
+  container.innerHTML = '';
+  if (list.length === 0) {
+    container.innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-muted)">No topics found</div>';
+    return;
+  }
+  for (const t of list) {
+    const agent = agents.find(a => a.id === t.agentId);
+    const card = document.createElement('div');
+    card.className = 'topic-card';
+    card.innerHTML = `
+      <span style="font-size:18px">${esc(agent?.emoji || '📂')}</span>
+      <div>
+        <div class="topic-card-name">${esc(t.name)}</div>
+        <div class="topic-card-agent">${esc(agent?.name || t.agentId)}</div>
+      </div>
+      <div class="topic-card-time">${t.lastUpdated ? new Date(t.lastUpdated).toLocaleDateString() : ''}</div>
+    `;
+    card.addEventListener('click', () => {
+      closeTopics();
+      launchAgent(t.agentId, t.name);
+    });
+    container.appendChild(card);
+  }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('topics-search')?.addEventListener('input', (e) => {
+    const q = e.target.value.toLowerCase();
+    renderTopics(allTopics.filter(t => t.name.toLowerCase().includes(q) || t.agentId.toLowerCase().includes(q)));
+  });
+});
+
+// ── Skills Catalog (B3 #5) ──────────────────────────────────────
+let allSkills = [];
+
+async function openSkills() {
+  document.getElementById('skills-overlay').classList.add('open');
+  try {
+    const res = await fetch('/api/skills');
+    allSkills = await res.json();
+    document.getElementById('skills-count').textContent = `${allSkills.length} SKILLS`;
+    renderSkills(allSkills);
+  } catch {
+    showToast('Failed to load skills', 'error');
+  }
+}
+
+function closeSkills() {
+  document.getElementById('skills-overlay').classList.remove('open');
+}
+
+function renderSkills(list) {
+  const container = document.getElementById('skills-list');
+  container.innerHTML = '';
+  if (list.length === 0) {
+    container.innerHTML = '<div style="padding:12px;font-size:11px;color:var(--text-dim)">No skills found</div>';
+    return;
+  }
+  for (const s of list) {
+    const el = document.createElement('div');
+    el.className = 'inspector-list-item';
+    el.textContent = s.name;
+    el.title = s.description || '';
+    el.addEventListener('click', async () => {
+      document.querySelectorAll('#skills-list .inspector-list-item').forEach(i => i.classList.remove('active'));
+      el.classList.add('active');
+      document.getElementById('skills-current').textContent = s.name;
+      try {
+        const r = await fetch(`/api/skills/${encodeURIComponent(s.id)}`);
+        const text = await r.text();
+        document.getElementById('skills-view').textContent = text;
+      } catch {
+        document.getElementById('skills-view').textContent = '(Failed to load)';
+      }
+    });
+    container.appendChild(el);
+  }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('skills-search')?.addEventListener('input', (e) => {
+    const q = e.target.value.toLowerCase();
+    renderSkills(allSkills.filter(s =>
+      s.name.toLowerCase().includes(q) ||
+      s.id.toLowerCase().includes(q) ||
+      (s.description && s.description.toLowerCase().includes(q))
+    ));
+  });
+});
+
+// ── Activity Feed (B3 #6) ───────────────────────────────────────
+let activityWs = null;
+let activityCache = [];
+
+function toggleActivityFeed() {
+  const feed = document.getElementById('activity-feed');
+  if (feed.classList.contains('open')) {
+    feed.classList.remove('open');
+  } else {
+    feed.classList.add('open');
+    if (!activityWs) connectActivityWs();
+  }
+}
+
+function connectActivityWs() {
+  const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  try {
+    activityWs = new WebSocket(`${proto}//${window.location.host}/ws/events`);
+    activityWs.onmessage = (e) => {
+      try {
+        const event = JSON.parse(e.data);
+        if (event.type === 'activity_snapshot') {
+          activityCache = event.data;
+          renderActivity();
+        } else if (event.type === 'activity') {
+          activityCache.unshift(event.data);
+          if (activityCache.length > 100) activityCache.length = 100;
+          renderActivity();
+        }
+      } catch {}
+    };
+    activityWs.onclose = () => { activityWs = null; };
+  } catch {
+    showToast('Failed to connect to activity feed', 'error');
+  }
+}
+
+function renderActivity() {
+  const list = document.getElementById('activity-list');
+  if (!list) return;
+  if (activityCache.length === 0) {
+    list.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text-dim);font-size:12px">No activity yet</div>';
+    return;
+  }
+  list.innerHTML = '';
+  for (const e of activityCache) {
+    const div = document.createElement('div');
+    div.className = `activity-item ${esc(e.type)}`;
+    div.innerHTML = `
+      <div class="activity-msg">${esc(e.message)}</div>
+      <div class="activity-time">${new Date(e.timestamp).toLocaleTimeString()}</div>
+    `;
+    list.appendChild(div);
+  }
+}
+
+// ── Workspace Inspector (B3 #1, #2, #3) ─────────────────────────
+let inspectorAgent = null;
+let inspectorSection = 'files';
+let inspectorCurrentFile = null;
+let inspectorEditing = false;
+
+async function openInspector(agentId) {
+  const agent = agents.find(a => a.id === agentId);
+  if (!agent) return;
+  inspectorAgent = agent;
+  inspectorSection = 'files';
+  inspectorCurrentFile = null;
+  inspectorEditing = false;
+
+  document.getElementById('inspector-emoji').textContent = agent.emoji;
+  document.getElementById('inspector-name').textContent = agent.name;
+  document.querySelectorAll('.inspector-tab').forEach(t => t.classList.toggle('active', t.dataset.section === 'files'));
+  document.getElementById('inspector-overlay').classList.add('open');
+  await inspectorLoadList();
+}
+
+function closeInspector() {
+  document.getElementById('inspector-overlay').classList.remove('open');
+  inspectorAgent = null;
+}
+
+async function inspectorShowSection(section) {
+  inspectorSection = section;
+  inspectorCurrentFile = null;
+  inspectorEditing = false;
+  document.querySelectorAll('.inspector-tab').forEach(t => t.classList.toggle('active', t.dataset.section === section));
+  document.getElementById('inspector-edit-btn').style.display = 'none';
+  document.getElementById('inspector-save-btn').style.display = 'none';
+  document.getElementById('inspector-current').textContent = '';
+  document.getElementById('inspector-view').textContent = '';
+  document.getElementById('inspector-editor').style.display = 'none';
+  document.getElementById('inspector-view').style.display = '';
+  await inspectorLoadList();
+}
+
+async function inspectorLoadList() {
+  if (!inspectorAgent) return;
+  const list = document.getElementById('inspector-list');
+  list.innerHTML = '<div style="padding:12px;font-size:11px;color:var(--text-dim)">Loading...</div>';
+
+  try {
+    let items = [];
+    if (inspectorSection === 'files') {
+      const res = await fetch(`/api/agents/${encodeURIComponent(inspectorAgent.id)}/files`);
+      const files = await res.json();
+      items = files.map(f => ({ label: f, value: f, type: 'file' }));
+    } else if (inspectorSection === 'memory') {
+      const res = await fetch(`/api/agents/${encodeURIComponent(inspectorAgent.id)}/memory`);
+      const mem = await res.json();
+      items = mem.map(m => ({ label: m.date, value: m.filename, type: 'memory' }));
+    } else if (inspectorSection === 'topics') {
+      items = inspectorAgent.topics.map(t => ({ label: t, value: t, type: 'topic' }));
+    }
+
+    if (items.length === 0) {
+      list.innerHTML = `<div style="padding:12px;font-size:11px;color:var(--text-dim)">No ${inspectorSection}</div>`;
+      return;
+    }
+
+    list.innerHTML = '';
+    for (const item of items) {
+      const el = document.createElement('div');
+      el.className = 'inspector-list-item';
+      el.textContent = item.label;
+      el.addEventListener('click', () => inspectorOpenItem(item));
+      list.appendChild(el);
+    }
+    // Auto-open first
+    if (items[0]) inspectorOpenItem(items[0]);
+  } catch (err) {
+    list.innerHTML = '<div style="padding:12px;font-size:11px;color:var(--danger)">Error loading</div>';
+  }
+}
+
+async function inspectorOpenItem(item) {
+  if (!inspectorAgent) return;
+  inspectorCurrentFile = item;
+  inspectorEditing = false;
+  document.querySelectorAll('.inspector-list-item').forEach(el => el.classList.toggle('active', el.textContent === item.label));
+  document.getElementById('inspector-current').textContent = item.label;
+  document.getElementById('inspector-view').style.display = '';
+  document.getElementById('inspector-editor').style.display = 'none';
+  document.getElementById('inspector-save-btn').style.display = 'none';
+
+  try {
+    let url;
+    if (item.type === 'file') {
+      url = `/api/agents/${encodeURIComponent(inspectorAgent.id)}/files/${encodeURIComponent(item.value)}`;
+      document.getElementById('inspector-edit-btn').style.display = '';
+    } else if (item.type === 'memory') {
+      url = `/api/agents/${encodeURIComponent(inspectorAgent.id)}/memory/${encodeURIComponent(item.value)}`;
+      document.getElementById('inspector-edit-btn').style.display = 'none';
+    } else if (item.type === 'topic') {
+      url = `/api/agents/${encodeURIComponent(inspectorAgent.id)}/topics/${encodeURIComponent(item.value)}/MEMORY.md`;
+      document.getElementById('inspector-edit-btn').style.display = 'none';
+    }
+    const res = await fetch(url);
+    const text = await res.text();
+    document.getElementById('inspector-view').textContent = text;
+  } catch {
+    document.getElementById('inspector-view').textContent = '(Failed to load)';
+  }
+}
+
+function inspectorToggleEdit() {
+  if (!inspectorCurrentFile || inspectorCurrentFile.type !== 'file') return;
+  inspectorEditing = !inspectorEditing;
+  const view = document.getElementById('inspector-view');
+  const editor = document.getElementById('inspector-editor');
+  const saveBtn = document.getElementById('inspector-save-btn');
+  if (inspectorEditing) {
+    editor.value = view.textContent;
+    view.style.display = 'none';
+    editor.style.display = '';
+    saveBtn.style.display = '';
+    editor.focus();
+  } else {
+    view.style.display = '';
+    editor.style.display = 'none';
+    saveBtn.style.display = 'none';
+  }
+}
+
+async function inspectorSave() {
+  if (!inspectorCurrentFile || !inspectorAgent || inspectorCurrentFile.type !== 'file') return;
+  const editor = document.getElementById('inspector-editor');
+  try {
+    const res = await fetch(`/api/agents/${encodeURIComponent(inspectorAgent.id)}/files/${encodeURIComponent(inspectorCurrentFile.value)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: editor.value }),
+    });
+    if (res.ok) {
+      showToast('Saved', 'success');
+      document.getElementById('inspector-view').textContent = editor.value;
+      inspectorToggleEdit();
+    } else {
+      showToast('Save failed', 'error');
+    }
+  } catch {
+    showToast('Save failed', 'error');
+  }
+}
+
+// Wire keyboard shortcuts for inspector
+document.addEventListener('keydown', (e) => {
+  if (!document.getElementById('inspector-overlay')?.classList.contains('open')) return;
+  if (e.key === 'Escape') { e.preventDefault(); closeInspector(); }
+  if ((e.ctrlKey || e.metaKey) && e.key === 's' && inspectorEditing) { e.preventDefault(); inspectorSave(); }
+});
+
 // ── Agent Detail Panel (#3) ─────────────────────────────────────
 function showDetailPanel(agentId) {
   const agent = agents.find(a => a.id === agentId);
@@ -652,6 +1199,10 @@ function showDetailPanel(agentId) {
   // Launch button
   const launchBtn = document.getElementById('detail-launch');
   launchBtn.onclick = () => { closeDetailPanel(); launchAgent(agent.id); };
+
+  // Inspect button
+  const inspectBtn = document.getElementById('detail-inspect');
+  if (inspectBtn) inspectBtn.onclick = () => { closeDetailPanel(); openInspector(agent.id); };
 
   document.getElementById('agent-detail').classList.add('open');
 }
@@ -714,12 +1265,19 @@ function showDashboard() {
 async function closeSession(sessionId) {
   const entry = terminals.get(sessionId);
   if (entry) {
+    // Track for quick resume (B3 #11)
+    lastClosedSession = { agentId: entry.agent.id, topic: entry.topic };
+
     if (entry.intentionallyClosed) entry.intentionallyClosed();
     if (entry.clearReconnect) entry.clearReconnect();
     entry.ws.close();
     entry.terminal.dispose();
     entry.resizeObserver.disconnect();
     terminals.delete(sessionId);
+    // Remove the persistent terminal wrapper
+    const container = document.getElementById('terminal-container');
+    const wrapper = container?.querySelector(`[data-terminal="${CSS.escape(sessionId)}"]`);
+    if (wrapper) wrapper.remove();
   }
 
   await fetch(`/api/sessions/${encodeURIComponent(sessionId)}`, { method: 'DELETE' });
@@ -778,6 +1336,7 @@ function showContextMenu(x, y, agentId) {
   const svgIcon = (d) => `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">${d}</svg>`;
 
   const items = [
+    { icon: svgIcon('<path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>'), label: 'Quick Chat...', action: () => openQuickChat(agentId) },
     { icon: svgIcon('<polygon points="5 3 19 12 5 21 5 3"/>'), label: 'Launch Session', action: () => launchAgent(agentId) },
     { icon: svgIcon('<path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/>'), label: 'Launch with Prompt...', action: () => showPromptLaunchModal(agentId) },
   ];
@@ -788,6 +1347,7 @@ function showContextMenu(x, y, agentId) {
 
   items.push(
     { icon: svgIcon('<circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/>'), label: 'View Details', action: () => showDetailPanel(agentId) },
+    { icon: svgIcon('<path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/>'), label: 'Inspect Workspace', action: () => openInspector(agentId) },
     { icon: svgIcon(isPinned(agentId) ? '<polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>' : '<polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>'), label: isPinned(agentId) ? 'Unpin' : 'Pin to Top', action: () => togglePin(agentId) },
     { sep: true },
     { icon: svgIcon('<rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>'), label: 'Copy workspace path', action: () => { navigator.clipboard?.writeText(`cd ~/clawd-${agentId}`); showToast('Path copied', 'info'); } },
@@ -1133,6 +1693,7 @@ async function updateStatsBar() {
       <span class="stat-item">${stats.memoryMB}MB</span>
       <span class="stat-sep">·</span>
       <span class="stat-item">up ${upH}h${upM}m</span>
+      ${stats.activeSessions > 0 ? `<span class="stat-sep">·</span><span class="stat-item" style="cursor:pointer;color:var(--warning)" onclick="killAllSessions(true)" title="Kill idle sessions">kill idle</span><span class="stat-sep">·</span><span class="stat-item" style="cursor:pointer;color:var(--danger)" onclick="killAllSessions(false)" title="Kill all sessions">kill all</span>` : ''}
     `;
   } catch {}
 }

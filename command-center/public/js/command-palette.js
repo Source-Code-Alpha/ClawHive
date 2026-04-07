@@ -76,6 +76,10 @@
       { type: 'command', icon: '🏠', label: 'Go to Dashboard', hint: 'Esc', action: () => { close(); showDashboard(); } },
       { type: 'command', icon: '🔍', label: 'Focus Search', hint: '/', action: () => { close(); document.getElementById('agent-search')?.focus(); } },
       { type: 'command', icon: '❓', label: 'Keyboard Shortcuts', hint: '?', action: () => { close(); toggleShortcutsOverlay(); } },
+      { type: 'command', icon: '📂', label: 'Browse Topics', hint: '', action: () => { close(); openTopics(); } },
+      { type: 'command', icon: '✨', label: 'Browse Skills', hint: '', action: () => { close(); openSkills(); } },
+      { type: 'command', icon: '⚙', label: 'Settings', hint: '', action: () => { close(); openSettings(); } },
+      { type: 'command', icon: '📡', label: 'Broadcast to all agents', hint: '', action: () => { close(); openBroadcast(); } },
     );
 
     // If there's an active session, add kill command
