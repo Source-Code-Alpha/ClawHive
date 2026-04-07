@@ -1,43 +1,73 @@
 <div align="center">
 
-<img src="https://capsule-render.vercel.app/api?type=waving&color=0:7c4dff,100:00d4ff&height=200&section=header&text=ClawHive&fontSize=70&fontColor=ffffff&fontAlignY=35&desc=Your%20AI%20Workforce%2C%20Running%20From%20The%20Terminal&descSize=18&descAlignY=55&descColor=b0b0e0" width="100%"/>
+<img src="https://capsule-render.vercel.app/api?type=waving&color=0:7c4dff,100:00d4ff&height=220&section=header&text=ClawHive&fontSize=80&fontColor=ffffff&fontAlignY=35&desc=Agents%20that%20actually%20remember&descSize=20&descAlignY=58&descColor=ffffff" width="100%"/>
 
-**8 specialized AI agents. One command center. 40 features. Infinite possibilities.**
+### A multi-agent framework for Claude Code where every agent loads its identity and memory on every session — automatically.
 
 [![Stars](https://img.shields.io/github/stars/Source-Code-Alpha/ClawHive?style=for-the-badge&color=7c4dff&labelColor=1a1a2e)](https://github.com/Source-Code-Alpha/ClawHive/stargazers)
 [![License](https://img.shields.io/badge/License-MIT-00d4ff?style=for-the-badge&labelColor=1a1a2e)](LICENSE)
 [![Agents](https://img.shields.io/badge/Agents-8-00e676?style=for-the-badge&labelColor=1a1a2e)](agents/)
-[![Features](https://img.shields.io/badge/Features-40-ff6d00?style=for-the-badge&labelColor=1a1a2e)](#command-center-features)
+[![Features](https://img.shields.io/badge/Features-100%2B-ff6d00?style=for-the-badge&labelColor=1a1a2e)](#command-center-features)
 [![PRs Welcome](https://img.shields.io/badge/PRs-Welcome-ff6d00?style=for-the-badge&labelColor=1a1a2e)](CONTRIBUTING.md)
-[![Made with Claude](https://img.shields.io/badge/Made%20with-Claude%20Code-ec4899?style=for-the-badge&labelColor=1a1a2e)](https://claude.ai/code)
 
 </div>
 
 ---
 
-## What is ClawHive?
+## The Problem
 
-ClawHive is a **multi-agent framework for Claude Code** that lets you run specialized AI agents -- each with its own personality, memory, skills, and expertise -- from a single dispatcher. Switch between a coding architect, a research analyst, a creative director, and more with a single command.
+Every Claude Code session starts blank. You re-explain your project, your preferences, your active work — every single time. The agent forgets who you are, what you're building, what you decided yesterday. After 50 sessions you've spent more time briefing the agent than working with it.
 
-It comes with a **web-based command center** -- a full-featured dashboard with themes, keyboard shortcuts, a command palette, live session management, and more. Think of it as mission control for your AI workforce.
+## The Fix
 
-<div align="center">
+**ClawHive guarantees memory persistence.** Every agent in ClawHive:
 
-| Feature | Description |
-|---------|-------------|
-| **Multi-Agent System** | 8 specialized agents with distinct personalities and expertise |
-| **Persistent Memory** | Agents remember across sessions -- decisions, context, and preferences |
-| **Web Command Center** | Feature-rich dark-themed dashboard with 40 built-in capabilities |
-| **Topic Isolation** | Work on multiple projects per agent, each with its own memory |
-| **3 Themes** | Midnight (default), Ocean (blue), and Obsidian (warm) |
-| **Command Palette** | Ctrl+K to fuzzy-search agents, topics, and commands instantly |
-| **Pin Favorites** | Star your most-used agents to keep them pinned at the top |
-| **Keyboard-First** | Full keyboard shortcut system -- press `?` for the overlay |
-| **PWA Ready** | Install as a native app from the browser |
-| **Extensible** | Add new agents in 30 seconds with `./scripts/add-agent.sh` |
-| **Zero Config** | Agents auto-discover from the filesystem. No database. No setup. |
+1. **Auto-loads** its identity (`IDENTITY.md`), personality (`SOUL.md`), operating manual (`AGENTS.md`), context about you (`USER.md`), tools (`TOOLS.md`), and long-term memory (`MEMORY.md`) on **every single session**. The command center forces this — Claude reads the files before doing anything else.
 
-</div>
+2. **Auto-saves** what happened — when a session ends (any way), the last 80 lines of the conversation are automatically appended to `memory/YYYY-MM-DD.md`. You never have to remember to "update memory."
+
+3. **Shows freshness at a glance** — every agent card has a colored dot: green (memory updated today), amber (this week), red (stale), gray (never). You can see which agents are warm vs cold across your whole fleet.
+
+The result: agents that actually feel like they know you, project by project, week after week.
+
+---
+
+## Screenshots
+
+> Screenshots coming soon. Until then, **[read A Day in the Life of ClawHive](docs/day-in-the-life.md)** — a walk-through showing what a real day with the dashboard actually feels like.
+
+```
+┌─ Dashboard ──────────────────────────────────────────────┐
+│  ✻ Command Center                clawhive   3/8 sessions │
+│  ─────────────────────────────────────────────────────── │
+│  All  ⭐ Pinned  Active  Engineering  Research  Social   │
+│                                                          │
+│  ENGINEERING & DEVELOPMENT ─────────                     │
+│  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐         │
+│  │ 🧑‍💻        ●│ │ 🛡         ●│ │ 🔍        ●│         │
+│  │ Codesmith   │ │ Sentinel    │ │ Oracle      │         │
+│  │ VP Eng.     │ │ Quality     │ │ Research    │         │
+│  │ #api #devops│ │ #security   │ │ #docs       │         │
+│  └─────────────┘ └─────────────┘ └─────────────┘         │
+│                                                          │
+└──────────────────────────────────────────────────────────┘
+   Ctrl+K palette · ? shortcuts · drag files into terminal
+```
+
+---
+
+## Why Use ClawHive?
+
+| | What ClawHive does | What's missing without it |
+|---|---|---|
+| **🧠 Memory** | Forces identity load on every session, auto-saves on exit | You re-brief Claude every time |
+| **👥 Specialists** | 8 distinct agents (coding, research, social, finance, etc.) | One generalist that's mediocre at everything |
+| **🎨 Web Dashboard** | Multi-tab terminal sessions, themes, command palette, search | Terminal-only, lose context when you switch projects |
+| **🔍 Inspect** | View/edit any agent's identity, memory, topics from the browser | Manually `cat` files to understand state |
+| **🎯 Topics** | Separate memory streams per project per agent | All projects bleed into one memory file |
+| **📡 Webhooks** | External services trigger sessions, sessions trigger external services | Manual everything |
+| **🎙 Voice** | Push-to-talk via browser Speech API | Type everything |
+| **🔌 Skills** | Browse and run reusable capability modules across agents | Re-explain methodologies each session |
 
 ---
 
@@ -60,29 +90,47 @@ cd ClawHive
 .\scripts\setup.ps1
 ```
 
+### Prerequisites
+
+Before running setup, make sure you have:
+
+- **Node.js 20+** (`node --version`) — required for the command center
+- **Claude Code CLI** (`claude --version`) — install with `npm i -g @anthropic-ai/claude-code`
+- **Git** (`git --version`)
+- **Build tools** (only if you want the command center):
+  - Windows: Visual Studio Build Tools or `npm install --global windows-build-tools`
+  - macOS: Xcode Command Line Tools (`xcode-select --install`)
+  - Linux: `build-essential` and `python3`
+
+The command center uses `node-pty`, which compiles native modules. If `npm install` fails, see [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
+
 ### 3. Launch an Agent
 
 ```bash
-# From terminal -- just cd into any agent and run claude
+# From terminal — cd into any agent and run claude
 cd ~/clawd-coding
 claude
 ```
 
-### 4. Or Use the Command Center
+The agent will read its CLAUDE.md, IDENTITY.md, SOUL.md, AGENTS.md, USER.md, TOOLS.md, and MEMORY.md before responding. It actually knows who it is.
+
+### 4. Or Use the Command Center (web dashboard)
 
 ```bash
 cd ~/clawhive-command-center
+npm install     # First time only — compiles node-pty
 npx tsx server/index.ts
 # Open http://localhost:3096
 ```
 
-Once the dashboard loads, try these right away:
+Once the dashboard loads, try:
 
-- **Ctrl+K** -- Open the command palette to fuzzy-search agents and commands
-- **?** -- View all keyboard shortcuts
-- **Right-click** any agent card for a context menu with quick actions
-- **Double-click** an agent card to open the detail panel
-- Click the **theme button** in the header to switch between Midnight, Ocean, and Obsidian
+- **Ctrl+K** — fuzzy-search agents, topics, skills, commands
+- **?** — show all keyboard shortcuts
+- **Right-click** any agent card for a context menu
+- **Double-click** an agent card to open the detail panel with metrics
+- Click the **theme button** in the header to cycle Midnight / Ocean / Obsidian
+- Click the **heart icon** in the header to see the health of all your agents
 
 ---
 
@@ -419,12 +467,49 @@ ClawHive/
 ## Roadmap
 
 - [x] ~~Dashboard themes~~ (shipped: Midnight, Ocean, Obsidian)
+- [x] ~~Voice input (push-to-talk)~~ (shipped via Web Speech API)
+- [x] ~~Memory persistence with auto-save~~ (shipped)
+- [x] ~~Webhook receiver and outgoing webhooks~~ (shipped)
+- [ ] Voice output (text-to-speech) — deferred
 - [ ] Community agent marketplace
-- [ ] Agent-to-agent communication protocol
-- [ ] Voice interface (push-to-talk)
-- [ ] Skill marketplace
-- [ ] One-click cloud deployment
+- [ ] Native Telegram / Discord bidirectional integration
+- [ ] One-click cloud deployment (Railway / Fly button)
+- [ ] AI-summarized memory (replace raw scrollback append)
+- [ ] Cross-agent message bus
 - [ ] Plugin system for custom dashboard widgets
+
+---
+
+## Known Limitations
+
+ClawHive is young and built fast. Here is what is not great yet, in honest terms:
+
+**Install**
+- `node-pty` compilation can fail on Windows without Visual Studio Build Tools — see [TROUBLESHOOTING.md](TROUBLESHOOTING.md)
+- First-run install on a clean machine is not bulletproof; expect to read the troubleshooting guide
+- We have not run automated install tests on every OS/Node combination
+
+**Dashboard / Sessions**
+- The `Quick Chat` feature spawns a fresh PTY and waits for stable output; it works most of the time but can return truncated responses on slow first-boots
+- `Voice input` requires Chrome / Edge / a Chromium-based browser — Firefox is not supported
+- `Session replay` is scaffolded but lightly tested
+- No authentication on the API by default; you can opt in by setting `CLAWHIVE_TOKEN` (see [TROUBLESHOOTING.md](TROUBLESHOOTING.md))
+- `Skill execution` only works for skills with a runnable script in `scripts/`. Pure-markdown skills can be browsed but not "run."
+
+**Memory**
+- Auto-save dumps the last 80 lines of raw scrollback into `memory/YYYY-MM-DD.md`. It is honest but verbose. A future version will use Claude itself to summarize.
+- Force boot sequence sends a prompt 4 seconds after Claude starts. On very slow machines, this can race with Claude's own boot output.
+
+**Mobile**
+- Installable as a PWA but the dashboard is desktop-first
+- Voice input does not work on iOS Safari
+- Some overlays (workspace inspector) are tight on screens narrower than 380px
+
+**Cross-agent**
+- Multi-agent broadcast is real
+- Agent-to-agent messaging is not (each session is isolated)
+
+We tell you all this up front because we would rather you know than be surprised. PRs and issues welcome on any of it.
 
 ---
 
