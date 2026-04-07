@@ -194,6 +194,7 @@ async function loadAgents() {
     renderAgentGrid(agents);
     updateSessionCount();
     updateStatsBar();
+    loadHealthForCards();
   } catch (err) {
     console.error('Failed to load agents:', err);
   }
@@ -802,6 +803,67 @@ async function shareCurrentSession() {
   } catch (err) {
     showToast(`Share failed: ${err.message}`, 'error');
   }
+}
+
+// ── Agent Health Panel (B5 #6) ──────────────────────────────────
+let healthCache = {};
+
+async function openAgentHealth() {
+  document.getElementById('health-overlay').classList.add('open');
+  document.getElementById('health-list').innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-muted)">Scanning agents...</div>';
+  try {
+    const res = await fetch('/api/health/agents');
+    const list = await res.json();
+    healthCache = {};
+    for (const h of list) healthCache[h.agentId] = h;
+    list.sort((a, b) => a.score - b.score);
+    const fresh = list.filter(h => h.freshness === 'fresh').length;
+    const stale = list.filter(h => h.freshness === 'stale' || h.freshness === 'cold').length;
+    document.getElementById('health-summary').textContent = `${list.length} AGENTS · ${fresh} FRESH · ${stale} NEED ATTENTION`;
+    const container = document.getElementById('health-list');
+    container.innerHTML = '';
+    const HEALTH_FILES = ["IDENTITY.md","SOUL.md","AGENTS.md","USER.md","TOOLS.md","MEMORY.md","CLAUDE.md"];
+    for (const h of list) {
+      const agent = agents.find(a => a.id === h.agentId);
+      const scoreClass = h.score >= 80 ? 'high' : h.score >= 50 ? 'mid' : 'low';
+      const dots = HEALTH_FILES.map(f => {
+        const fh = h.files[f];
+        const cls = fh?.filled ? 'filled' : fh?.exists ? 'exists' : '';
+        return `<div class="health-file-dot ${cls}" title="${esc(f)}: ${fh?.size||0}b"></div>`;
+      }).join('');
+      const row = document.createElement('div');
+      row.className = 'health-row';
+      row.innerHTML = `<span class="health-emoji">${esc(agent?.emoji||'🤖')}</span><span class="health-name">${esc(agent?.name||h.agentId)}</span><div class="health-files">${dots}</div><span class="health-freshness ${esc(h.freshness)}">${esc(h.freshness)}</span><span class="health-score ${scoreClass}">${h.score}/100</span>`;
+      row.addEventListener('click', () => { closeAgentHealth(); openInspector(h.agentId); });
+      container.appendChild(row);
+    }
+  } catch (err) {
+    document.getElementById('health-list').innerHTML = `<div style="padding:40px;text-align:center;color:var(--danger)">Failed: ${esc(err.message)}</div>`;
+  }
+}
+
+function closeAgentHealth() {
+  document.getElementById('health-overlay').classList.remove('open');
+}
+
+async function loadHealthForCards() {
+  try {
+    const res = await fetch('/api/health/agents');
+    const list = await res.json();
+    healthCache = {};
+    for (const h of list) healthCache[h.agentId] = h;
+    document.querySelectorAll('.agent-card[data-agent]').forEach(card => {
+      const id = card.dataset.agent;
+      const h = healthCache[id];
+      if (!h) return;
+      const old = card.querySelector('.freshness-dot');
+      if (old) old.remove();
+      const dot = document.createElement('div');
+      dot.className = `freshness-dot ${h.freshness}`;
+      dot.title = `Memory: ${h.freshness} · Score ${h.score}/100`;
+      card.appendChild(dot);
+    });
+  } catch {}
 }
 
 // ── Today's Digest (B4 #5) ──────────────────────────────────────

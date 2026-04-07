@@ -74,6 +74,137 @@ export interface MemoryEntry {
   preview: string;
 }
 
+// ── Agent Health Audit (B5 #1) ─────────────────────────────────
+
+export interface FileHealth {
+  exists: boolean;
+  size: number;
+  filled: boolean; // size > 500 chars
+  mtime: string | null;
+}
+
+export interface AgentHealth {
+  agentId: string;
+  files: Record<string, FileHealth>;
+  memoryEntries: number;
+  lastMemoryUpdate: string | null;
+  freshness: "fresh" | "recent" | "stale" | "cold"; // today / week / >7d / never
+  score: number; // 0-100
+}
+
+const HEALTH_FILES = ["IDENTITY.md", "SOUL.md", "AGENTS.md", "USER.md", "TOOLS.md", "MEMORY.md", "CLAUDE.md"];
+
+export function getAgentHealth(agentId: string): AgentHealth | null {
+  const ws = workspacePath(agentId);
+  if (!ws) return null;
+
+  const files: Record<string, FileHealth> = {};
+  let filledCount = 0;
+  for (const fname of HEALTH_FILES) {
+    const fpath = path.join(ws, fname);
+    try {
+      const stat = fs.statSync(fpath);
+      const filled = stat.size > 500;
+      files[fname] = {
+        exists: true,
+        size: stat.size,
+        filled,
+        mtime: stat.mtime.toISOString(),
+      };
+      if (filled) filledCount++;
+    } catch {
+      files[fname] = { exists: false, size: 0, filled: false, mtime: null };
+    }
+  }
+
+  // Memory dir analysis
+  const memDir = path.join(ws, "memory");
+  let memoryEntries = 0;
+  let lastMemoryUpdate: string | null = null;
+  try {
+    if (fs.existsSync(memDir)) {
+      const memFiles = fs.readdirSync(memDir).filter(f => f.endsWith(".md"));
+      memoryEntries = memFiles.length;
+      if (memFiles.length > 0) {
+        const newest = memFiles.sort().reverse()[0];
+        const stat = fs.statSync(path.join(memDir, newest));
+        lastMemoryUpdate = stat.mtime.toISOString();
+      }
+    }
+  } catch {}
+
+  // Also check root MEMORY.md mtime for freshness
+  const memRootMtime = files["MEMORY.md"]?.mtime;
+  if (memRootMtime && (!lastMemoryUpdate || memRootMtime > lastMemoryUpdate)) {
+    lastMemoryUpdate = memRootMtime;
+  }
+
+  // Freshness
+  let freshness: AgentHealth["freshness"] = "cold";
+  if (lastMemoryUpdate) {
+    const ageDays = (Date.now() - new Date(lastMemoryUpdate).getTime()) / (1000 * 60 * 60 * 24);
+    if (ageDays < 1) freshness = "fresh";
+    else if (ageDays < 7) freshness = "recent";
+    else freshness = "stale";
+  }
+
+  // Score: 60% from filled files, 40% from freshness
+  const filesScore = (filledCount / HEALTH_FILES.length) * 60;
+  const freshnessScore = freshness === "fresh" ? 40 : freshness === "recent" ? 25 : freshness === "stale" ? 10 : 0;
+  const score = Math.round(filesScore + freshnessScore);
+
+  return {
+    agentId,
+    files,
+    memoryEntries,
+    lastMemoryUpdate,
+    freshness,
+    score,
+  };
+}
+
+export function getAllAgentHealth(): AgentHealth[] {
+  const results: AgentHealth[] = [];
+  try {
+    const entries = fs.readdirSync(HOME, { withFileTypes: true });
+    for (const entry of entries) {
+      if (!entry.isDirectory() || !entry.name.startsWith(WORKSPACE_PREFIX)) continue;
+      const agentId = entry.name.slice(WORKSPACE_PREFIX.length);
+      const health = getAgentHealth(agentId);
+      if (health) results.push(health);
+    }
+  } catch {}
+  return results;
+}
+
+// ── Auto-Save Memory (B5 #4) ───────────────────────────────────
+
+export function appendDailyMemory(agentId: string, topic: string | undefined, summary: string): boolean {
+  const ws = workspacePath(agentId);
+  if (!ws) return false;
+
+  const memDir = path.join(ws, "memory");
+  try {
+    fs.mkdirSync(memDir, { recursive: true });
+    const today = new Date().toISOString().slice(0, 10);
+    const fpath = path.join(memDir, `${today}.md`);
+    const timestamp = new Date().toISOString().slice(11, 16);
+    const header = topic
+      ? `\n\n## ${timestamp} — Session (topic: ${topic})\n\n`
+      : `\n\n## ${timestamp} — Session\n\n`;
+    const entry = header + summary + "\n";
+
+    if (fs.existsSync(fpath)) {
+      fs.appendFileSync(fpath, entry, "utf-8");
+    } else {
+      fs.writeFileSync(fpath, `# Daily Memory — ${today}\n${entry}`, "utf-8");
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function listMemory(agentId: string, limit = 30): MemoryEntry[] {
   const ws = workspacePath(agentId);
   if (!ws) return [];
@@ -396,7 +527,7 @@ export function globalSearch(query: string, limit = 30): SearchResult[] {
 
 // ── Session History Full-Text Search (B4 #2) ───────────────────
 
-const HISTORY_DIR_FOR_SEARCH = path.join(HOME, ".clawhive", "history");
+const HISTORY_DIR_FOR_SEARCH = path.join(HOME, ".agent-command-center", "history");
 
 export interface HistorySearchResult {
   filename: string;
@@ -629,7 +760,7 @@ export function validateWebhookSecret(secret: string): boolean {
 
 // ── Outgoing Webhooks (B4 #8) ──────────────────────────────────
 
-const OUTGOING_WEBHOOKS_FILE = path.join(HOME, ".clawhive", "webhooks.json");
+const OUTGOING_WEBHOOKS_FILE = path.join(HOME, ".agent-command-center", "webhooks.json");
 
 export function getOutgoingWebhooks(): string[] {
   try {

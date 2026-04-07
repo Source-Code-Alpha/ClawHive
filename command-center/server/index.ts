@@ -50,6 +50,9 @@ import {
   fireOutgoingWebhooks,
   createShareLink,
   getShareLink,
+  getAgentHealth,
+  getAllAgentHealth,
+  appendDailyMemory,
 } from "./workspace.js";
 import { executeSkill } from "./sessions.js";
 
@@ -125,8 +128,9 @@ app.post("/api/sessions", (req, res) => {
   const cols = clamp(req.body.cols, 10, 500, 120);
   const rows = clamp(req.body.rows, 5, 200, 30);
   const initialPrompt = typeof req.body.initialPrompt === "string" ? req.body.initialPrompt.slice(0, 5000) : undefined;
+  const forceBootSequence = req.body.forceBootSequence !== false; // default true
 
-  const session = createSession(agentId, topic, cols, rows, initialPrompt);
+  const session = createSession(agentId, topic, cols, rows, initialPrompt, forceBootSequence);
   if (!session) {
     const active = [...listSessions()].filter(s => s.alive).length;
     res.status(503).json({ error: `Max sessions reached (${active}/8)` });
@@ -284,6 +288,20 @@ app.get("/api/agents/:id/metrics", (req, res) => {
 
 app.get("/api/digest/today", (_req, res) => {
   res.json(getTodayDigest());
+});
+
+// ── Agent Health (B5 #1) ────────────────────────────────────────
+
+app.get("/api/agents/:id/health", (req, res) => {
+  const id = validateId(req.params.id);
+  if (!id) { res.status(400).json({ error: "Invalid agent id" }); return; }
+  const health = getAgentHealth(id);
+  if (!health) { res.status(404).json({ error: "Agent not found" }); return; }
+  res.json(health);
+});
+
+app.get("/api/health/agents", (_req, res) => {
+  res.json(getAllAgentHealth());
 });
 
 // ── File Upload (B4 #6) ─────────────────────────────────────────
@@ -516,7 +534,6 @@ server.listen(PORT, "0.0.0.0", () => {
   const agents = discoverAgents();
   console.log(`\n  Agent Command Center`);
   console.log(`  http://localhost:${PORT}`);
-  console.log(`  http://localhost`);
   console.log(`  ${agents.length} agents discovered`);
   console.log(`  Webhook secret: ${getWebhookSecret().slice(0, 8)}...`);
   startMemoryWatcher();

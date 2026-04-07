@@ -51,6 +51,7 @@
           <button class="icon-btn" title="Topics" onclick="openTopics()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg></button>
           <button class="icon-btn" title="Skills" onclick="openSkills()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg></button>
           <button class="icon-btn" title="Activity" onclick="toggleActivityFeed()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg></button>
+          <button class="icon-btn" title="Agent Health" onclick="openAgentHealth()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z"/></svg></button>
           <button class="icon-btn" id="view-toggle" title="Toggle compact view" onclick="toggleViewMode()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M3 12h18M3 18h18"/></svg></button>
           <button class="icon-btn" id="theme-toggle" title="Cycle theme" onclick="cycleTheme()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 0 0 18V3z" fill="currentColor"/></svg></button>
           <button class="icon-btn" title="Settings" onclick="openSettings()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg></button>
@@ -125,6 +126,21 @@
       <div style="display:flex;gap:8px;margin-top:auto">
         <button id="detail-inspect" class="detail-launch-btn" style="flex:1;background:transparent;border-color:var(--border-hover);color:var(--text-secondary)">Inspect Files</button>
         <button id="detail-launch" class="detail-launch-btn" style="flex:1">Launch</button>
+      </div>
+    </div>
+
+    <!-- Agent Health Panel (B5 #6) -->
+    <div id="health-overlay" class="inspector-overlay">
+      <div class="inspector-panel">
+        <div class="inspector-header">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+          <div>
+            <div class="inspector-name">Agent Health</div>
+            <div class="inspector-sub" id="health-summary">SCANNING...</div>
+          </div>
+          <button class="detail-close" onclick="closeAgentHealth()">&#215;</button>
+        </div>
+        <div id="health-list" class="inspector-body" style="overflow-y:auto;flex-direction:column;padding:12px"></div>
       </div>
     </div>
 

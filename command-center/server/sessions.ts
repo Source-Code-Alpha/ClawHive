@@ -8,7 +8,7 @@ const { spawn } = nodePty;
 
 const MAX_SESSIONS = parseInt(process.env.MAX_SESSIONS || "8");
 const SCROLLBACK_SIZE = 200 * 1024; // 200KB -- enough for reconnect replay
-const HISTORY_DIR = path.join(os.homedir(), ".clawhive", "history");
+const HISTORY_DIR = path.join(os.homedir(), ".agent-command-center", "history");
 const KEEPALIVE_INTERVAL = 30_000; // 30s WebSocket ping
 const IDLE_TIMEOUT = parseInt(process.env.IDLE_TIMEOUT || "1800") * 1000; // default 30 min
 
@@ -52,7 +52,7 @@ function updateCurrentTask(agentId: string, status: "running" | "ended", summary
       `**Agent:** ${agentId}\n\n` +
       `Session is running in the Agent Command Center.\n` +
       `If this session was interrupted, check the history at:\n` +
-      `~/.clawhive/history/\n\n` +
+      `~/.agent-command-center/history/\n\n` +
       `## Live Output (last 2000 chars)\n\n` +
       `\`\`\`\n${summary || "(session just started)"}\n\`\`\`\n`;
     try { fs.writeFileSync(taskFile, content, "utf-8"); } catch {}
@@ -74,7 +74,8 @@ export function createSession(
   topic?: string,
   cols = 120,
   rows = 30,
-  initialPrompt?: string
+  initialPrompt?: string,
+  forceBootSequence = true
 ): PtySession | null {
   const id = sessionId(agentId, topic);
 
@@ -171,6 +172,18 @@ export function createSession(
       session.historyStream = null;
     }
 
+    // Auto-save scrollback to memory/YYYY-MM-DD.md (B5 #4)
+    try {
+      const stripped = stripAnsi(session.buffer);
+      const lines = stripped.split("\n").filter(l => l.trim() && !l.match(/^\[(Reconnecting|Connection)/));
+      const lastLines = lines.slice(-80).join("\n");
+      const summary = `**Duration:** ${Math.round((Date.now() - session.createdAt.getTime()) / 60000)}m\n**Exit:** ${exitCode}\n\n### Last output\n\n\`\`\`\n${lastLines.slice(-3000)}\n\`\`\`\n\n*(Auto-saved by command center)*`;
+      // Lazy import to avoid circular dependency
+      import("./workspace.js").then(ws => {
+        ws.appendDailyMemory(agentId, topic, summary);
+      }).catch(() => {});
+    } catch {}
+
     // Clear CURRENT_TASK.md
     updateCurrentTask(agentId, "ended");
 
@@ -199,14 +212,21 @@ export function createSession(
   // Initial CURRENT_TASK.md
   updateCurrentTask(agentId, "running");
 
-  // Send initial prompt after Claude boots (#5)
-  if (initialPrompt) {
-    // Delay to let Claude finish loading (reads CLAUDE.md etc)
+  // Force boot sequence + initial prompt (B5 #3)
+  if (forceBootSequence || initialPrompt) {
     setTimeout(() => {
-      if (session.alive) {
-        session.pty.write(initialPrompt + "\n");
+      if (!session.alive) return;
+      let bootMsg = "";
+      if (forceBootSequence) {
+        bootMsg = "Before we begin: please read CLAUDE.md, IDENTITY.md, SOUL.md, AGENTS.md, USER.md, TOOLS.md, MEMORY.md and the most recent file in memory/ in this directory. Then confirm in one sentence who you are. After that, ";
       }
-    }, 3000);
+      if (initialPrompt) {
+        bootMsg += initialPrompt;
+      } else if (forceBootSequence) {
+        bootMsg += "wait for my next instruction.";
+      }
+      session.pty.write(bootMsg + "\n");
+    }, 4000);
   }
 
   sessions.set(id, session);
