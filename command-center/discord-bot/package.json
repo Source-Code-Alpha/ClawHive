@@ -1,0 +1,22 @@
+{
+  "name": "clawhive-discord-bot",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Discord bot bridge for the ClawHive command center",
+  "main": "index.ts",
+  "scripts": {
+    "start": "npx tsx index.ts",
+    "dev": "npx tsx watch index.ts"
+  },
+  "dependencies": {
+    "@xterm/headless": "^6.0.0",
+    "discord.js": "^14.16.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/ws": "^8.5.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}

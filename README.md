@@ -68,6 +68,7 @@ The result: agents that actually feel like they know you, project by project, we
 | **📡 Webhooks** | External services trigger sessions, sessions trigger external services | Manual everything |
 | **🎙 Voice** | Push-to-talk via browser Speech API | Type everything |
 | **🔌 Skills** | Browse and run reusable capability modules across agents | Re-explain methodologies each session |
+| **💬 Discord** | One channel per agent, persistent sessions, chat from your phone | Tied to a desktop browser |
 
 ---
 
@@ -302,6 +303,35 @@ The command center ships with **40 built-in features** across six categories. Ev
 | `Ctrl+F` | Search within terminal output |
 | Right-click agent card | Open context menu |
 | Double-click agent card | Open agent detail panel |
+
+---
+
+## Discord Bot (NEW)
+
+A standalone Discord bridge ships with the command center. Chat with any agent from your phone, get a daily activity digest, run quick one-shots — all over Discord.
+
+| Feature | What it does |
+|---|---|
+| **One channel per agent** | The bot maps Discord channel names to agent IDs. `#engineering` → `engineering` agent. Run `/setup` once and the bot auto-creates a channel for every ClawHive agent. |
+| **Persistent sessions** | Every channel keeps its own Claude session UUID. Conversations survive bot restarts and resume cleanly via `claude --resume <uuid>`. |
+| **Always Opus** | The bot spawns Claude with `--model opus` regardless of dashboard defaults. |
+| **Conversational tone** | Every message is sent with a system prompt telling the agent to reply like it's texting a colleague — no terminal banners, no status lines, just clean prose. |
+| **File uploads** | Drop a file in any agent channel — the bot uploads it to that agent's `uploads/` folder and tells the agent to read it. |
+| **Daily digest** | Auto-posts a summary of yesterday's sessions, memory updates, and topics created to the `#daily` channel every morning. |
+| **Slash commands** | `/setup`, `/agents`, `/quick`, `/status`, `/end`, `/digest`, `/health`. |
+| **Whitelist auth** | Single Discord user ID allow-list. Anyone else in your server gets a polite "private bot" reply. |
+
+**Why this is different from typical Discord bots:** instead of trying to scrape clean output from a TUI session, the bot spawns `claude -p` directly per message, captures stdout, and posts the result. There is no PTY, no terminal scraping, no ANSI parsing — just clean markdown from Claude piped to Discord.
+
+```
+You ──▶ Discord gateway (WS) ──▶ Bot ──spawn──▶ claude -p (subprocess)
+                                  │                    │
+                                  │                    ▼
+                                  │            Clean stdout (markdown)
+                                  ◀────────── send to channel
+```
+
+Setup is documented in `command-center/discord-bot/README.md`. The bot is a separate Node process from the command center — you can run it on a different machine, disable it without affecting the dashboard, and crash it without taking anything else down.
 
 ---
 

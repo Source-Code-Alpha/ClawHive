@@ -41,7 +41,7 @@ function stripAnsi(str: string): string {
 }
 
 function updateCurrentTask(agentId: string, status: "running" | "ended", summary?: string) {
-  const workspace = path.join(os.homedir(), `${process.env.WORKSPACE_PREFIX || "clawd-"}${agentId}`);
+  const workspace = path.join(os.homedir(), `clawd-${agentId}`);
   const taskFile = path.join(workspace, "CURRENT_TASK.md");
   const now = new Date().toISOString();
 
@@ -87,10 +87,10 @@ export function createSession(
   const activeCount = [...sessions.values()].filter((s) => s.alive).length;
   if (activeCount >= MAX_SESSIONS) return null;
 
-  const workspace = path.join(os.homedir(), `${process.env.WORKSPACE_PREFIX || "clawd-"}${agentId}`);
-  const claudeBin = process.env.CLAUDE_BIN || "claude";
+  const workspace = path.join(os.homedir(), `clawd-${agentId}`);
+  const claudeBin = "C:\\nvm4w\\nodejs\\claude.cmd";
 
-  const pty = spawn(claudeBin, ["--dangerously-skip-permissions"], {
+  const pty = spawn(claudeBin, ["--dangerously-skip-permissions", "--model", "opus"], {
     name: "xterm-256color",
     cols,
     rows,
@@ -371,7 +371,7 @@ export async function quickChat(agentId: string, prompt: string, timeoutMs = 90_
     const RESPONSE_IDLE_MS = 4000;   // Response is "complete" after 4s of silence
     const MIN_RESPONSE_BYTES = 20;   // Don't return empty responses
 
-    const pty = spawn(claudeBin, ["--dangerously-skip-permissions"], {
+    const pty = spawn(claudeBin, ["--dangerously-skip-permissions", "--model", "opus"], {
       name: "xterm-256color",
       cols: 120,
       rows: 30,
@@ -487,7 +487,7 @@ export async function executeSkill(skillId: string, args: string = "", timeoutMs
       const userPrompt = args.trim() || "Apply this skill to a sample task and show me the structured output.";
       const composedPrompt = `# Skill in use\n\n${skillContent}\n\n---\n\n# Task\n\n${userPrompt}\n\nApply the methodology above to this task and return your output following any format the skill specifies.`;
 
-      const pty = spawn(claudeBin, ["--dangerously-skip-permissions"], {
+      const pty = spawn(claudeBin, ["--dangerously-skip-permissions", "--model", "opus"], {
         name: "xterm-256color",
         cols: 120,
         rows: 30,
