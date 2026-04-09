@@ -1,7 +1,7 @@
 // Spawn `claude -p` directly per Discord message — no PTY, no TUI scraping.
 // Each channel keeps a session UUID so subsequent messages resume the conversation.
 
-import { spawn } from "child_process";
+import { spawn, spawnSync } from "child_process";
 import fs from "fs";
 import os from "os";
 import path from "path";
@@ -30,7 +30,151 @@ const TONE_PROMPT = [
   "Do not echo their question. Do not start with phrases like 'I'll' or 'Let me'.",
   "Do not show terminal output, banners, file paths, or status lines unless they ask.",
   "Stay in character as defined in your CLAUDE.md / IDENTITY.md / SOUL.md.",
+  "",
+  "DELEGATION: You can ask other agents questions by running:",
+  "  bash ~/clawd-shared/scripts/ask-agent.sh <agent_id> \"<question>\"",
+  "Available agents: soha_coding (engineering), plant_ops (manufacturing), chimi_ops (sales/marketing),",
+  "atlas (research), soha_rd (R&D), soha_finance (finance), the_doctor (system health),",
+  "crypto_trader (crypto), idea_forge (product strategy), aurelia (design), reco (restructuring), personal (Director).",
+  "Use delegation when you need facts from another agent's domain. The target agent answers from its own memory and identity.",
 ].join(" ");
+
+// === MEMORY LAYERS (1000X stack) ===
+
+const MEMPALACE_ENV = { ...process.env, PYTHONIOENCODING: "utf-8", PYTHONUTF8: "1", FORCE_COLOR: "0" };
+const MEMPALACE_TIMEOUT = 12000; // 12s max for any mempalace call
+
+function getPalacePath(agentId: string): string {
+  return path.join(os.homedir(), ".mempalace", agentId);
+}
+
+function hasPalace(agentId: string): boolean {
+  return fs.existsSync(path.join(getPalacePath(agentId), "chroma.sqlite3"));
+}
+
+// Layer 1: Proactive memory injection — search mempalace for the user's message BEFORE spawning claude
+function searchMemory(agentId: string, query: string): string {
+  if (!hasPalace(agentId)) return "";
+  try {
+    const result = spawnSync("python", [
+      "-m", "mempalace", "--palace", getPalacePath(agentId),
+      "search", query.slice(0, 200), "--wing", agentId,
+    ], { env: MEMPALACE_ENV, timeout: MEMPALACE_TIMEOUT, encoding: "utf-8", windowsHide: true });
+    const text = (result.stdout || "").trim();
+    // Strip the header/footer, keep only result blocks
+    const lines = text.split("\n").filter(l =>
+      !l.startsWith("===") && !l.startsWith("---") && l.trim().length > 0
+    );
+    const cleaned = lines.join("\n").trim();
+    if (cleaned.length < 30) return "";
+    return cleaned.slice(0, 2500);
+  } catch {
+    return "";
+  }
+}
+
+// Layer 6: Real-time system awareness — lightweight snapshot of system health
+async function getSystemSnapshot(agentId: string): Promise<string> {
+  const parts: string[] = [];
+
+  // ClawHive command center health
+  try {
+    const health = await api.health();
+    parts.push(`ClawHive: up ${Math.floor(health.uptime / 60)}min, ${health.activeSessions} sessions, ${health.agentCount} agents`);
+  } catch {}
+
+  // Docker container count (quick check)
+  try {
+    const r = spawnSync("docker", ["ps", "--format", "{{.Names}}: {{.Status}}"], {
+      timeout: 5000, encoding: "utf-8", windowsHide: true,
+    });
+    const lines = (r.stdout || "").trim().split("\n").filter(l => l.trim());
+    if (lines.length > 0) {
+      const healthy = lines.filter(l => l.includes("Up")).length;
+      const unhealthy = lines.length - healthy;
+      let summary = `Docker: ${lines.length} containers (${healthy} up`;
+      if (unhealthy > 0) summary += `, ${unhealthy} DOWN`;
+      summary += ")";
+      if (unhealthy > 0) {
+        const down = lines.filter(l => !l.includes("Up")).map(l => l.split(":")[0]).join(", ");
+        summary += ` -- DOWN: ${down}`;
+      }
+      parts.push(summary);
+    }
+  } catch {}
+
+  // Disk usage (Windows)
+  try {
+    const r = spawnSync("powershell", ["-Command",
+      "[math]::Round((Get-PSDrive C).Free/1GB,1).ToString() + 'GB free of ' + [math]::Round(((Get-PSDrive C).Used + (Get-PSDrive C).Free)/1GB,0).ToString() + 'GB'",
+    ], { timeout: 5000, encoding: "utf-8", windowsHide: true });
+    const disk = (r.stdout || "").trim();
+    if (disk) parts.push(`Disk C: ${disk}`);
+  } catch {}
+
+  if (parts.length === 0) return "";
+  return "## System status (live):\n" + parts.join("\n");
+}
+
+// Layer 2: Warm-start briefing — wake-up + CURRENT_TASK.md + recent git log (first message only)
+function generateBriefing(agentId: string, workspace: string): string {
+  const parts: string[] = [];
+
+  // MemPalace wake-up (critical facts digest)
+  if (hasPalace(agentId)) {
+    try {
+      const result = spawnSync("python", [
+        "-m", "mempalace", "--palace", getPalacePath(agentId),
+        "wake-up", "--wing", agentId,
+      ], { env: MEMPALACE_ENV, timeout: MEMPALACE_TIMEOUT, encoding: "utf-8", windowsHide: true });
+      const wakeup = (result.stdout || "").trim();
+      if (wakeup.length > 50) parts.push("## What you know (from memory):\n" + wakeup.slice(0, 1500));
+    } catch {}
+  }
+
+  // CURRENT_TASK.md — where you left off
+  try {
+    const taskFile = path.join(workspace, "CURRENT_TASK.md");
+    if (fs.existsSync(taskFile)) {
+      const task = fs.readFileSync(taskFile, "utf-8").trim().slice(0, 800);
+      if (task.length > 20) parts.push("## Where you left off (CURRENT_TASK.md):\n" + task);
+    }
+  } catch {}
+
+  // Recent git commits
+  try {
+    const result = spawnSync("git", ["log", "--oneline", "-5"], {
+      cwd: workspace, timeout: 5000, encoding: "utf-8", windowsHide: true,
+    });
+    const log = (result.stdout || "").trim();
+    if (log.length > 10) parts.push("## Recent git activity:\n" + log);
+  } catch {}
+
+  return parts.join("\n\n");
+}
+
+// Layer 3 + 7: Post-turn auto-index — mine the Q&A pair into MemPalace
+function autoIndexTurn(agentId: string, userMessage: string, agentResponse: string): void {
+  if (!hasPalace(agentId)) return;
+  if (agentResponse.length < 50) return; // skip trivial responses
+
+  try {
+    const turnDir = path.join(os.tmpdir(), `mempalace-turn-${agentId}-${Date.now()}`);
+    fs.mkdirSync(turnDir, { recursive: true });
+    const turnFile = path.join(turnDir, `turn-${new Date().toISOString().slice(0, 10)}.md`);
+    fs.writeFileSync(turnFile, `## ${new Date().toISOString()}\n\n**User:** ${userMessage}\n\n**Agent:** ${agentResponse.slice(0, 3000)}\n`);
+
+    spawnSync("python", [
+      "-m", "mempalace", "--palace", getPalacePath(agentId),
+      "mine", turnDir, "--mode", "convos", "--extract", "general", "--wing", agentId,
+    ], { env: MEMPALACE_ENV, timeout: 30000, encoding: "utf-8", windowsHide: true });
+
+    // Cleanup temp
+    try { fs.unlinkSync(turnFile); fs.rmdirSync(turnDir); } catch {}
+  } catch (err: any) {
+    console.error("[auto-index]", err.message);
+  }
+}
 
 interface ChannelState {
   channelId: string;
@@ -143,10 +287,37 @@ export class SessionManager {
     };
     refreshTyping();
 
+    // === LAYER 1: Proactive memory injection ===
+    const memoryContext = searchMemory(state.agentId, text);
+    if (memoryContext) {
+      console.log(`[memory] [${state.agentId}] found ${memoryContext.length} chars of relevant context`);
+    }
+
+    // === LAYER 2 + 6: Warm-start briefing + system awareness (first message only) ===
+    let briefing = "";
+    if (!state.sessionUuid) {
+      briefing = generateBriefing(state.agentId, state.workspace);
+      // Layer 6: append live system snapshot
+      try {
+        const snapshot = await getSystemSnapshot(state.agentId);
+        if (snapshot) briefing += (briefing ? "\n\n" : "") + snapshot;
+      } catch {}
+      if (briefing) {
+        console.log(`[briefing] [${state.agentId}] generated ${briefing.length} chars (incl. system snapshot)`);
+      }
+    }
+
+    // Build the full system prompt: tone + memory + briefing
+    const systemParts = [TONE_PROMPT];
+    if (memoryContext) systemParts.push("\n\n## Relevant memories from past sessions:\n" + memoryContext);
+    if (briefing) systemParts.push("\n\n" + briefing);
+    const fullSystemPrompt = systemParts.join("");
+
     // Streaming state for this turn
     let textBuf = "";                                     // accumulated text since last flush
     let headerSent = false;                               // header goes on first chunk only
     let totalCharsEmitted = 0;                            // for the trailing log line
+    let responseAccumulator = "";                         // full response text for Layer 3+7 indexing
     let flushTimer: ReturnType<typeof setTimeout> | null = null;
     const FLUSH_DEBOUNCE_MS = 1800;                       // wait this long after last delta before sending
     const MAX_BUF_BYTES = 1700;                           // force-flush if buffer exceeds this
@@ -195,7 +366,7 @@ export class SessionManager {
         "-p", text,
         "--model", "opus",
         "--dangerously-skip-permissions",
-        "--append-system-prompt", TONE_PROMPT,
+        "--append-system-prompt", fullSystemPrompt,
         "--output-format", "stream-json",
         "--include-partial-messages",
         "--verbose",
@@ -239,6 +410,7 @@ export class SessionManager {
             const t = inner.delta.text;
             if (typeof t === "string" && t.length > 0) {
               textBuf += t;
+              responseAccumulator += t;    // Layer 3+7: accumulate full response
               scheduleFlush();
             }
             return;
@@ -270,6 +442,7 @@ export class SessionManager {
           for (const block of event.message.content) {
             if (block?.type === "text" && typeof block.text === "string") {
               textBuf += block.text;
+              responseAccumulator += block.text;  // Layer 3+7
               scheduleFlush();
             } else if (block?.type === "tool_use") {
               await flush();
@@ -350,6 +523,14 @@ export class SessionManager {
       }
 
       console.log(`[claude] [${state.agentId}] <- ${totalCharsEmitted} chars (streamed)`);
+
+      // === LAYER 3 + 7: Auto-index this turn into MemPalace (fire-and-forget) ===
+      if (responseAccumulator.length > 50) {
+        setTimeout(() => {
+          autoIndexTurn(state.agentId, text, responseAccumulator);
+          console.log(`[auto-index] [${state.agentId}] indexed ${responseAccumulator.length} chars`);
+        }, 100); // non-blocking — don't slow down the Discord response
+      }
       return true;
     } catch (err: any) {
       typingActive = false;
