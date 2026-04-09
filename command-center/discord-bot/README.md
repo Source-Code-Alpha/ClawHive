@@ -108,6 +108,19 @@ Every message is sent with this `--append-system-prompt`:
 
 The agent's `CLAUDE.md` / `SOUL.md` still drives personality — this just biases the *form* toward chat instead of terminal report.
 
+## MemPalace Integration
+
+If you've set up [MemPalace](https://github.com/milla-jovovich/mempalace) for an agent (via `scripts/mempalace-onboard-agent.sh`), the Discord bot automatically benefits — because `claude -p` loads MCP tools from the agent's workspace, including MemPalace's 19 memory tools. No changes to the bot are needed.
+
+What this means in practice:
+- **Ask about past context:** "What did we decide about pricing last month?" — the agent calls `mempalace_search` and finds the answer across old sessions
+- **Cross-session continuity:** even if the Discord session UUID is reset, MemPalace remembers everything from past conversations
+- **Wake-up grounding:** agents can call `mempalace wake-up` to load ~800 tokens of critical facts at the start of a conversation
+
+The memory search happens transparently — the agent decides when to call MemPalace tools based on whether your question needs historical context. You don't need to do anything special.
+
+---
+
 ## Troubleshooting
 
 **Bot does not log in**

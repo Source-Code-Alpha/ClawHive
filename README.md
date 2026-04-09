@@ -69,6 +69,7 @@ The result: agents that actually feel like they know you, project by project, we
 | **🎙 Voice** | Push-to-talk via browser Speech API | Type everything |
 | **🔌 Skills** | Browse and run reusable capability modules across agents | Re-explain methodologies each session |
 | **💬 Discord** | One channel per agent, persistent sessions, chat from your phone | Tied to a desktop browser |
+| **🏛️ MemPalace** | Semantic search across all agent memories — "what did we decide about X?" | Grep through files or re-ask the question |
 
 ---
 
@@ -179,6 +180,13 @@ graph TB
     W1 --> SOUL["SOUL.md"]
     W1 --> MEM["MEMORY.md"]
     W1 --> SK["Shared Skills"]
+    W1 --> MP["🏛️ MemPalace<br/>(semantic search)"]
+
+    MP -->|"MCP tools"| Claude
+    MP -->|"ChromaDB vectors"| Palace["~/.mempalace/{agent}/<br/>wings, rooms, drawers"]
+
+    Discord["Discord Bot"] -->|"claude -p per message"| Claude
+    Discord -->|"one channel per agent"| User
 
     subgraph "Shared Resources"
         SK
@@ -191,6 +199,9 @@ graph TB
     style Dispatcher fill:#ff6d00,color:#fff,stroke:#ff6d00
     style Health fill:#00e676,color:#000,stroke:#00e676
     style AgentCache fill:#e040fb,color:#fff,stroke:#e040fb
+    style MP fill:#ff6d00,color:#fff,stroke:#ff6d00
+    style Palace fill:#1a1a2e,color:#fff,stroke:#7c4dff
+    style Discord fill:#5865F2,color:#fff,stroke:#5865F2
 ```
 
 ### How an Agent Session Works
@@ -332,6 +343,85 @@ You ──▶ Discord gateway (WS) ──▶ Bot ──spawn──▶ claude -p 
 ```
 
 Setup is documented in `command-center/discord-bot/README.md`. The bot is a separate Node process from the command center — you can run it on a different machine, disable it without affecting the dashboard, and crash it without taking anything else down.
+
+---
+
+## MemPalace — Semantic Memory (NEW)
+
+Every ClawHive agent accumulates `MEMORY.md` files, daily scrollbacks, and topic-specific notes across sessions. Without search, finding "what did we decide about pricing last month?" means grepping through dozens of files. **MemPalace makes every memory semantically searchable — no API keys required.**
+
+### How it works
+
+[MemPalace](https://github.com/milla-jovovich/mempalace) stores agent memories as verbatim "drawers" in a local ChromaDB vector database, organized into a navigable hierarchy that maps directly onto ClawHive's agent model:
+
+| MemPalace concept | ClawHive equivalent |
+|---|---|
+| **Wing** | One agent (`coding`, `researcher`, `finance`...) |
+| **Room** | One topic within an agent (`homelab`, `exports`, `pricing`) |
+| **Drawer** | One memory entry (a day's scrollback, a MEMORY.md section) |
+| **Tunnel** | A shared topic discovered across multiple agents |
+
+All data stays local at `~/.mempalace/{agent}/`. No cloud. No API keys. No telemetry. MIT licensed.
+
+### What it gives your agents
+
+| Capability | How |
+|---|---|
+| **"What did we decide about X?"** | `mempalace search "pricing strategy" --wing coding` returns semantically ranked verbatim snippets from that agent's memory |
+| **Cross-agent recall** | `mempalace search "UAE expansion" --wing operations` finds what your ops agent knows, even from a session 3 weeks ago |
+| **Cold-start grounding** | `mempalace wake-up --wing coding` outputs ~800 tokens of critical facts to inject into a new session — the agent walks in warm |
+| **Temporal queries** | The built-in knowledge graph tracks `valid_from` / `valid_until` on facts — "what was true in February?" is a supported query |
+| **MCP-native** | Agents call `mempalace_search`, `mempalace_kg_query`, `mempalace_add_drawer` as native tools during any session. No glue code. |
+
+### Setup — one command per agent
+
+```bash
+# 1. Install (once)
+pip install mempalace
+
+# 2. Onboard an agent (30 seconds each)
+bash scripts/mempalace-onboard-agent.sh coding
+
+# What this does:
+#   - Mines the agent's memory/ daily files + MEMORY.md into a palace
+#   - Registers the MemPalace MCP server for that agent's workspace
+#   - The agent's Claude sessions now have 19 memory tools available automatically
+```
+
+Or manually:
+
+```bash
+# Mine an agent's memory
+mempalace --palace ~/.mempalace/coding mine ~/clawd-coding/memory --mode convos --extract general --wing coding
+
+# Register the MCP server
+cd ~/clawd-coding
+claude mcp add mempalace -- python -m mempalace.mcp_server --palace ~/.mempalace/coding
+
+# Test a search
+mempalace --palace ~/.mempalace/coding search "refactoring the auth module"
+```
+
+### Architecture
+
+```
+Agent session (claude -p or dashboard)
+    │
+    ├── reads CLAUDE.md, IDENTITY.md, SOUL.md, MEMORY.md  (boot)
+    │
+    ├── calls mempalace_search("pricing discussion")       (MCP tool)
+    │       └── ChromaDB vector search → ranked drawers
+    │
+    ├── calls mempalace_kg_query("UAE contacts")           (MCP tool)
+    │       └── SQLite knowledge graph → entity timeline
+    │
+    └── calls mempalace_add_drawer(new_memory)             (MCP tool)
+            └── indexed for future sessions
+
+All 19 MCP tools are stdio-based. No ports. No daemons. Zero infrastructure.
+```
+
+MemPalace is **additive** — it reads your existing `.md` files without modifying them. The palace is a search index alongside your source-of-truth markdown, not a replacement for it.
 
 ---
 
@@ -506,10 +596,12 @@ ClawHive/
 │   └── finance/
 ├── command-center/           # Web dashboard (40 features)
 │   ├── server/               # Express + WebSocket + node-pty + health check
-│   └── public/               # HTML + CSS + xterm.js + themes
+│   ├── public/               # HTML + CSS + xterm.js + themes
+│   └── discord-bot/          # Discord bridge (one channel per agent, streaming)
 ├── skills/                   # Shared capability modules
 ├── templates/                # Blank templates for new agents
-├── scripts/                  # Setup, add-agent, backup utilities
+├── scripts/                  # Setup, add-agent, mempalace onboarding
+│   └── mempalace-onboard-agent.sh  # One-command memory setup per agent
 └── docs/                     # Architecture and guides
 ```
 
@@ -521,13 +613,16 @@ ClawHive/
 - [x] ~~Voice input (push-to-talk)~~ (shipped via Web Speech API)
 - [x] ~~Memory persistence with auto-save~~ (shipped)
 - [x] ~~Webhook receiver and outgoing webhooks~~ (shipped)
-- [ ] Voice output (text-to-speech) — deferred
-- [ ] Community agent marketplace
-- [ ] Native Telegram / Discord bidirectional integration
+- [x] ~~Discord bidirectional integration~~ (shipped: one channel per agent, streaming output, slash commands)
+- [x] ~~Semantic memory search~~ (shipped: MemPalace integration — ChromaDB vectors + knowledge graph, MCP-native)
+- [x] ~~Always-Opus default~~ (shipped: all sessions spawn with `--model opus`)
+- [ ] Multi-LLM router (Anthropic + OpenAI + Gemini + Ollama)
+- [ ] OpenAI-compatible `/v1/chat/completions` API
+- [ ] MCP server mode (expose agents as tools for other Claude sessions)
+- [ ] Cross-agent message bus and context handoff
 - [ ] One-click cloud deployment (Railway / Fly button)
-- [ ] AI-summarized memory (replace raw scrollback append)
-- [ ] Cross-agent message bus
 - [ ] Plugin system for custom dashboard widgets
+- [ ] Community agent marketplace
 
 ---
 
@@ -548,7 +643,8 @@ ClawHive is young and built fast. Here is what is not great yet, in honest terms
 - `Skill execution` only works for skills with a runnable script in `scripts/`. Pure-markdown skills can be browsed but not "run."
 
 **Memory**
-- Auto-save dumps the last 80 lines of raw scrollback into `memory/YYYY-MM-DD.md`. It is honest but verbose. A future version will use Claude itself to summarize.
+- Auto-save dumps the last 80 lines of raw scrollback into `memory/YYYY-MM-DD.md`. It is honest but verbose.
+- **With MemPalace enabled**, all memory files become semantically searchable — agents can find past decisions, pricing discussions, and project context across sessions without you pointing at specific files. Run `scripts/mempalace-onboard-agent.sh {agent}` to set it up per agent.
 - Force boot sequence sends a prompt 4 seconds after Claude starts. On very slow machines, this can race with Claude's own boot output.
 
 **Mobile**
