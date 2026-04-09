@@ -16,7 +16,10 @@ const SESSIONS_FILE = path.join(__dirname, "sessions.json");
 // Bypass claude.cmd (Node 18+ EINVAL on Windows .cmd spawn) — call cli.js directly with node.
 const NODE_BIN = "C:\\nvm4w\\nodejs\\node.exe";
 const CLAUDE_CLI_JS = "C:\\nvm4w\\nodejs\\node_modules\\@anthropic-ai\\claude-code\\cli.js";
-const RESPONSE_TIMEOUT_MS = 5 * 60 * 1000; // kill the child after 5 minutes
+// Timeout after which we kill the claude subprocess. Crypto/research agents can run long
+// (deep analysis, multiple tool calls) — 15 minutes is a comfortable ceiling. Override with
+// DISCORD_TIMEOUT_MIN env var if you need more headroom.
+const RESPONSE_TIMEOUT_MS = (parseInt(process.env.DISCORD_TIMEOUT_MIN || "15") || 15) * 60 * 1000;
 
 // Tone instruction appended to every message — keeps agents conversational
 // instead of falling into Claude Code "terminal report" mode.
@@ -140,6 +143,52 @@ export class SessionManager {
     };
     refreshTyping();
 
+    // Streaming state for this turn
+    let textBuf = "";                                     // accumulated text since last flush
+    let headerSent = false;                               // header goes on first chunk only
+    let totalCharsEmitted = 0;                            // for the trailing log line
+    let flushTimer: ReturnType<typeof setTimeout> | null = null;
+    const FLUSH_DEBOUNCE_MS = 1800;                       // wait this long after last delta before sending
+    const MAX_BUF_BYTES = 1700;                           // force-flush if buffer exceeds this
+
+    const flush = async () => {
+      if (flushTimer) {
+        clearTimeout(flushTimer);
+        flushTimer = null;
+      }
+      if (!textBuf.trim()) return;
+
+      const out = textBuf;
+      textBuf = "";
+      totalCharsEmitted += out.length;
+
+      const agent = await this.getAgentInfo(channelId);
+      const header = agent && !headerSent ? agentHeader(agent.emoji, agent.name) : "";
+      headerSent = true;
+
+      const pieces = chunkMessage(out);
+      for (let i = 0; i < pieces.length; i++) {
+        const message = (i === 0 ? header : "") + pieces[i];
+        try {
+          await this.outputCallback(channelId, message);
+        } catch (err: any) {
+          console.error("[output]", err.message);
+        }
+      }
+    };
+
+    const scheduleFlush = () => {
+      if (textBuf.length >= MAX_BUF_BYTES) {
+        // Force-flush on overflow — don't wait for the debounce
+        if (flushTimer) clearTimeout(flushTimer);
+        flushTimer = null;
+        flush();
+        return;
+      }
+      if (flushTimer) clearTimeout(flushTimer);
+      flushTimer = setTimeout(() => { flush(); }, FLUSH_DEBOUNCE_MS);
+    };
+
     try {
       const args = [
         CLAUDE_CLI_JS,
@@ -147,7 +196,9 @@ export class SessionManager {
         "--model", "opus",
         "--dangerously-skip-permissions",
         "--append-system-prompt", TONE_PROMPT,
-        "--output-format", "text",
+        "--output-format", "stream-json",
+        "--include-partial-messages",
+        "--verbose",
       ];
       if (state.sessionUuid) {
         args.push("--resume", state.sessionUuid);
@@ -166,7 +217,7 @@ export class SessionManager {
         windowsHide: true,
       });
 
-      let stdout = "";
+      let lineBuf = "";
       let stderr = "";
       let timedOut = false;
 
@@ -175,7 +226,90 @@ export class SessionManager {
         try { child.kill("SIGKILL"); } catch {}
       }, RESPONSE_TIMEOUT_MS);
 
-      child.stdout.on("data", chunk => { stdout += chunk.toString(); });
+      // Track recent tool name so we can collapse runs of identical tools (e.g. Read, Read, Read)
+      let lastToolName: string | null = null;
+
+      const handleEvent = async (event: any) => {
+        if (!event || typeof event !== "object") return;
+
+        // Token-level deltas (from --include-partial-messages)
+        if (event.type === "stream_event" && event.event) {
+          const inner = event.event;
+          if (inner.type === "content_block_delta" && inner.delta?.type === "text_delta") {
+            const t = inner.delta.text;
+            if (typeof t === "string" && t.length > 0) {
+              textBuf += t;
+              scheduleFlush();
+            }
+            return;
+          }
+          if (inner.type === "content_block_start" && inner.content_block?.type === "tool_use") {
+            // Flush any accumulated text BEFORE the tool status, so order is preserved
+            await flush();
+            const toolName = inner.content_block.name || "tool";
+            if (toolName !== lastToolName) {
+              lastToolName = toolName;
+              try {
+                await this.outputCallback(channelId, `_🔧 ${toolName}_`);
+              } catch (err: any) {
+                console.error("[tool-status]", err.message);
+              }
+            }
+            return;
+          }
+          // Reset lastToolName when a non-tool block starts (e.g. text)
+          if (inner.type === "content_block_start" && inner.content_block?.type === "text") {
+            lastToolName = null;
+            return;
+          }
+          return;
+        }
+
+        // Non-streaming assistant messages (full content blocks at once)
+        if (event.type === "assistant" && event.message?.content) {
+          for (const block of event.message.content) {
+            if (block?.type === "text" && typeof block.text === "string") {
+              textBuf += block.text;
+              scheduleFlush();
+            } else if (block?.type === "tool_use") {
+              await flush();
+              const toolName = block.name || "tool";
+              if (toolName !== lastToolName) {
+                lastToolName = toolName;
+                try {
+                  await this.outputCallback(channelId, `_🔧 ${toolName}_`);
+                } catch (err: any) {
+                  console.error("[tool-status]", err.message);
+                }
+              }
+            }
+          }
+          return;
+        }
+
+        // Final result event — flush remaining
+        if (event.type === "result") {
+          await flush();
+          return;
+        }
+      };
+
+      child.stdout.on("data", (chunk: Buffer) => {
+        lineBuf += chunk.toString();
+        let nl: number;
+        while ((nl = lineBuf.indexOf("\n")) >= 0) {
+          const line = lineBuf.slice(0, nl).trim();
+          lineBuf = lineBuf.slice(nl + 1);
+          if (!line) continue;
+          try {
+            const event = JSON.parse(line);
+            handleEvent(event).catch(err => console.error("[event]", err.message));
+          } catch {
+            // Not JSON — ignore (could be a stray log line)
+          }
+        }
+      });
+
       child.stderr.on("data", chunk => { stderr += chunk.toString(); });
 
       const exitCode: number | null = await new Promise(resolve => {
@@ -189,14 +323,17 @@ export class SessionManager {
       clearTimeout(timer);
       typingActive = false;
 
+      // Final flush in case the stream ended without an explicit result event
+      await flush();
+
       if (timedOut) {
-        await this.outputCallback(channelId, "_Timed out after 5 minutes — killed the agent process. Try again or use a shorter prompt._");
+        const minutes = Math.round(RESPONSE_TIMEOUT_MS / 60000);
+        await this.outputCallback(channelId, `_Timed out after ${minutes} minutes — killed the agent process. Try again, ask a shorter follow-up, or set \`DISCORD_TIMEOUT_MIN\` higher in .env._`);
         return false;
       }
 
       if (exitCode !== 0) {
         console.error("[claude] exit", exitCode, "stderr:", stderr.slice(0, 500));
-        // If the resume failed (e.g., session UUID lost), drop it and tell the user
         if (stderr.toLowerCase().includes("session") && state.sessionUuid) {
           state.sessionUuid = null;
           this.persistSessions();
@@ -208,25 +345,11 @@ export class SessionManager {
         return false;
       }
 
-      const cleaned = stdout.trim();
-      if (!cleaned) {
+      if (totalCharsEmitted === 0) {
         await this.outputCallback(channelId, "_(empty response)_");
-        return true;
       }
 
-      console.log(`[claude] [${state.agentId}] <- ${cleaned.length} chars`);
-
-      const agent = await this.getAgentInfo(channelId);
-      const header = agent ? agentHeader(agent.emoji, agent.name) : "";
-      const chunks = chunkMessage(cleaned);
-      for (let i = 0; i < chunks.length; i++) {
-        const message = (i === 0 ? header : "") + chunks[i];
-        try {
-          await this.outputCallback(channelId, message);
-        } catch (err: any) {
-          console.error("[output]", err.message);
-        }
-      }
+      console.log(`[claude] [${state.agentId}] <- ${totalCharsEmitted} chars (streamed)`);
       return true;
     } catch (err: any) {
       typingActive = false;
@@ -234,6 +357,7 @@ export class SessionManager {
       await this.outputCallback(channelId, `_Error: ${err.message}_`);
       return false;
     } finally {
+      if (flushTimer) clearTimeout(flushTimer);
       typingActive = false;
       state.isRunning = false;
     }
