@@ -1,11 +1,14 @@
 <div align="center">
 
-<img src="https://capsule-render.vercel.app/api?type=waving&color=0:7c4dff,100:00d4ff&height=220&section=header&text=ClawHive&fontSize=80&fontColor=ffffff&fontAlignY=35&desc=Agents%20that%20actually%20remember&descSize=20&descAlignY=58&descColor=ffffff" width="100%"/>
+<img src="https://capsule-render.vercel.app/api?type=waving&color=0:7c4dff,100:00d4ff&height=220&section=header&text=ClawHive&fontSize=80&fontColor=ffffff&fontAlignY=35&desc=The%20open-source%20OpenClaw%20alternative&descSize=20&descAlignY=58&descColor=ffffff" width="100%"/>
 
-### A multi-agent framework for Claude Code where every agent loads its identity and memory on every session — automatically.
+### The open-source OpenClaw alternative — built for Claude subscribers.
+
+*No API keys. No per-token billing. Your Claude subscription powers a full fleet of persistent, memory-enabled agents.*
 
 [![Stars](https://img.shields.io/github/stars/Source-Code-Alpha/ClawHive?style=for-the-badge&color=7c4dff&labelColor=1a1a2e)](https://github.com/Source-Code-Alpha/ClawHive/stargazers)
 [![License](https://img.shields.io/badge/License-MIT-00d4ff?style=for-the-badge&labelColor=1a1a2e)](LICENSE)
+[![Claude Subscription](https://img.shields.io/badge/Claude-Subscription%20Powered-00e676?style=for-the-badge&labelColor=1a1a2e)](https://claude.ai)
 [![Agents](https://img.shields.io/badge/Agents-8-00e676?style=for-the-badge&labelColor=1a1a2e)](agents/)
 [![Features](https://img.shields.io/badge/Features-100%2B-ff6d00?style=for-the-badge&labelColor=1a1a2e)](#command-center-features)
 [![PRs Welcome](https://img.shields.io/badge/PRs-Welcome-ff6d00?style=for-the-badge&labelColor=1a1a2e)](CONTRIBUTING.md)
@@ -29,6 +32,27 @@ Every Claude Code session starts blank. You re-explain your project, your prefer
 3. **Shows freshness at a glance** — every agent card has a colored dot: green (memory updated today), amber (this week), red (stale), gray (never). You can see which agents are warm vs cold across your whole fleet.
 
 The result: agents that actually feel like they know you, project by project, week after week.
+
+---
+
+## ClawHive vs OpenClaw
+
+OpenClaw is a powerful gateway — but it requires API keys, per-token billing, and a Python/Node infrastructure stack. **ClawHive runs entirely on your existing Claude subscription.** If you're paying for Claude Pro ($20/mo) or Claude Max ($100-200/mo), you already have everything you need.
+
+| | ClawHive | OpenClaw |
+|---|---|---|
+| **Billing model** | **Your Claude subscription** — flat rate, no surprises | API keys — pay per token (`ANTHROPIC_API_KEY` required) |
+| **Setup** | `git clone` + `npm install` + done | `npm install -g` + `openclaw onboard` + configure API keys + configure channels |
+| **Runtime** | Claude Code (`claude -p`) — the same CLI you already use | Custom gateway daemon on port 18789 |
+| **Agent identity** | 6 markdown files per agent — no code, no config, just `.md` | JSON config + plugin system |
+| **Memory** | `MEMORY.md` auto-saved every session + [MemPalace semantic search](#mempalace--semantic-memory-new) | Plugin-based (memory-core / memory-lancedb) |
+| **Web dashboard** | Built-in — 40 features, xterm.js terminals, themes, command palette | Control UI (Lit-based, separate from chat) |
+| **Discord** | [Built-in bridge](#discord-bot-new) — one channel per agent, streaming, slash commands | Plugin (requires separate configuration) |
+| **Model** | Always Opus (or any Claude model via `--model` flag) | 30+ LLM providers (Anthropic, OpenAI, Gemini, etc.) |
+| **Multi-LLM** | Claude-focused (multi-LLM planned) | Yes — 30+ providers |
+| **Best for** | **Claude subscribers who want persistent, role-specialized agents that just work** | Power users who need multi-LLM routing and 20+ messaging channels |
+
+**The trade-off is honest:** OpenClaw has broader LLM and channel support. ClawHive has deeper agent persistence, zero-config identity, and runs on the subscription you're already paying for. Pick the one that matches how you actually work.
 
 ---
 
