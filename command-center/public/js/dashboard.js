@@ -66,15 +66,17 @@ function escAttr(str) {
 }
 
 // ── Agent categories and accent colors ────────────────────────
+// Categories are read dynamically from each agent's IDENTITY.md (Category: field).
+// This fallback map is only used when an agent has no Category defined.
 const agentCategories = {
-  coding:      'engineering',
-  auditor:     'engineering',
-  researcher:  'research',
-  prompter:    'research',
-  social:      'social',
-  designer:    'social',
-  life:        'personal',
-  finance:     'operations',
+  coding:     'engineering',
+  researcher: 'research',
+  designer:   'creative',
+  auditor:    'operations',
+  finance:    'operations',
+  social:     'social',
+  life:       'personal',
+  prompter:   'personal',
 };
 
 const categoryColors = {
@@ -95,10 +97,12 @@ const categoryLabels = {
   personal:    'Personal & System',
 };
 
+// Accent colors are read dynamically from each agent's IDENTITY.md (Color: field).
+// This fallback map is only used when an agent has no Color defined.
 const agentAccentColors = {
-  coding: '#7c4dff', researcher: '#00bcd4', social: '#ec4899',
-  life: '#00e676', prompter: '#f59e0b', designer: '#a855f7',
-  auditor: '#22c55e', finance: '#ff6d00',
+  coding: '#7c4dff', researcher: '#059669', designer: '#a855f7',
+  auditor: '#22c55e', finance: '#eab308', social: '#ec4899',
+  life: '#34d399', prompter: '#f59e0b',
 };
 
 // ── Category helper — prefer server-provided, fallback to hardcoded (#16) ──

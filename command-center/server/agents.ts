@@ -6,7 +6,7 @@ import type { Agent } from "./types.js";
 const HOME = os.homedir();
 const WORKSPACE_PREFIX = process.env.WORKSPACE_PREFIX || "clawd-";
 const SKIP_DIRS = new Set(
-  process.env.SKIP_DIRS?.split(",").filter(Boolean) || []
+  (process.env.SKIP_DIRS || "").split(",").filter(Boolean)
 );
 
 // ── Agent Discovery Cache (#13) ────────────────────────────────
