@@ -1,17 +1,17 @@
 <div align="center">
 
-<img src="https://capsule-render.vercel.app/api?type=waving&color=0:7c4dff,100:00d4ff&height=220&section=header&text=ClawHive&fontSize=80&fontColor=ffffff&fontAlignY=35&desc=The%20open-source%20OpenClaw%20alternative&descSize=20&descAlignY=58&descColor=ffffff" width="100%"/>
+<img src="https://capsule-render.vercel.app/api?type=waving&color=0:818cf8,100:38bdf8&height=220&section=header&text=ClawHive&fontSize=80&fontColor=ffffff&fontAlignY=35&desc=The%20open-source%20OpenClaw%20alternative&descSize=20&descAlignY=58&descColor=ffffff" width="100%"/>
 
 ### The open-source OpenClaw alternative — built for Claude subscribers.
 
 *No API keys. No per-token billing. Your Claude subscription powers a full fleet of persistent, memory-enabled agents.*
 
-[![Stars](https://img.shields.io/github/stars/Source-Code-Alpha/ClawHive?style=for-the-badge&color=7c4dff&labelColor=1a1a2e)](https://github.com/Source-Code-Alpha/ClawHive/stargazers)
-[![License](https://img.shields.io/badge/License-MIT-00d4ff?style=for-the-badge&labelColor=1a1a2e)](LICENSE)
-[![Claude Subscription](https://img.shields.io/badge/Claude-Subscription%20Powered-00e676?style=for-the-badge&labelColor=1a1a2e)](https://claude.ai)
-[![Agents](https://img.shields.io/badge/Agents-8-00e676?style=for-the-badge&labelColor=1a1a2e)](agents/)
-[![Features](https://img.shields.io/badge/Features-100%2B-ff6d00?style=for-the-badge&labelColor=1a1a2e)](#command-center-features)
-[![PRs Welcome](https://img.shields.io/badge/PRs-Welcome-ff6d00?style=for-the-badge&labelColor=1a1a2e)](CONTRIBUTING.md)
+[![Stars](https://img.shields.io/github/stars/Source-Code-Alpha/ClawHive?style=for-the-badge&color=818cf8&labelColor=0a0a14)](https://github.com/Source-Code-Alpha/ClawHive/stargazers)
+[![License](https://img.shields.io/badge/License-MIT-38bdf8?style=for-the-badge&labelColor=0a0a14)](LICENSE)
+[![Claude Subscription](https://img.shields.io/badge/Claude-Subscription%20Powered-34d399?style=for-the-badge&labelColor=0a0a14)](https://claude.ai)
+[![Agents](https://img.shields.io/badge/Agents-8-34d399?style=for-the-badge&labelColor=0a0a14)](agents/)
+[![Features](https://img.shields.io/badge/Features-100%2B-fb923c?style=for-the-badge&labelColor=0a0a14)](#command-center-features)
+[![PRs Welcome](https://img.shields.io/badge/PRs-Welcome-fb923c?style=for-the-badge&labelColor=0a0a14)](CONTRIBUTING.md)
 
 </div>
 
@@ -58,25 +58,39 @@ OpenClaw is a powerful gateway — but it requires API keys, per-token billing, 
 
 ## Screenshots
 
-> Screenshots coming soon. Until then, **[read A Day in the Life of ClawHive](docs/day-in-the-life.md)** — a walk-through showing what a real day with the dashboard actually feels like.
+<div align="center">
 
-```
-┌─ Dashboard ──────────────────────────────────────────────┐
-│  ✻ Command Center                clawhive   3/8 sessions │
-│  ─────────────────────────────────────────────────────── │
-│  All  ⭐ Pinned  Active  Engineering  Research  Social   │
-│                                                          │
-│  ENGINEERING & DEVELOPMENT ─────────                     │
-│  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐         │
-│  │ 🧑‍💻        ●│ │ 🛡         ●│ │ 🔍        ●│         │
-│  │ Codesmith   │ │ Sentinel    │ │ Oracle      │         │
-│  │ VP Eng.     │ │ Quality     │ │ Research    │         │
-│  │ #api #devops│ │ #security   │ │ #docs       │         │
-│  └─────────────┘ └─────────────┘ └─────────────┘         │
-│                                                          │
-└──────────────────────────────────────────────────────────┘
-   Ctrl+K palette · ? shortcuts · drag files into terminal
-```
+### Dashboard
+
+*Agent grid with category grouping, accent colors, topic chips, and recent sessions strip.*
+
+<img src="docs/images/dashboard.png" width="100%" alt="ClawHive Dashboard — agent cards grouped by category with glassmorphic design"/>
+
+<br/>
+
+### Terminal Session
+
+*Live Claude session with breadcrumb navigation, session tabs, and per-agent accent theming.*
+
+<img src="docs/images/terminal.png" width="100%" alt="ClawHive Terminal — live Claude session with agent identity loaded"/>
+
+<br/>
+
+### Command Palette
+
+*Ctrl+K fuzzy search across agents, topics, and commands — instant access to everything.*
+
+<img src="docs/images/command-palette.png" width="100%" alt="ClawHive Command Palette — fuzzy search with backdrop blur"/>
+
+<br/>
+
+### Theme Variants
+
+*Three built-in themes: Midnight (indigo), Ocean (blue), Obsidian (amber). Plus custom accent color picker.*
+
+<img src="docs/images/themes.png" width="100%" alt="ClawHive Themes — Midnight, Ocean, Obsidian"/>
+
+</div>
 
 ---
 
@@ -218,13 +232,13 @@ graph TB
         TPL["Templates"]
     end
 
-    style User fill:#7c4dff,color:#fff,stroke:#7c4dff
-    style Dashboard fill:#00d4ff,color:#000,stroke:#00d4ff
-    style Dispatcher fill:#ff6d00,color:#fff,stroke:#ff6d00
-    style Health fill:#00e676,color:#000,stroke:#00e676
-    style AgentCache fill:#e040fb,color:#fff,stroke:#e040fb
-    style MP fill:#ff6d00,color:#fff,stroke:#ff6d00
-    style Palace fill:#1a1a2e,color:#fff,stroke:#7c4dff
+    style User fill:#818cf8,color:#fff,stroke:#818cf8
+    style Dashboard fill:#38bdf8,color:#000,stroke:#38bdf8
+    style Dispatcher fill:#fb923c,color:#fff,stroke:#fb923c
+    style Health fill:#34d399,color:#000,stroke:#34d399
+    style AgentCache fill:#c084fc,color:#fff,stroke:#c084fc
+    style MP fill:#fb923c,color:#fff,stroke:#fb923c
+    style Palace fill:#0a0a14,color:#fff,stroke:#818cf8
     style Discord fill:#5865F2,color:#fff,stroke:#5865F2
 ```
 
@@ -501,7 +515,7 @@ The `IDENTITY.md` file does double duty -- it defines the agent's identity for C
 | `Role:` | `VP of Engineering` | Card subtitle |
 | `Vibe:` | `Fast, opinionated, clean` | Detail panel |
 | `Category:` | `engineering` | Dynamic filter chips on dashboard |
-| `Color:` | `#7c4dff` | Card border, glow, terminal cursor accent |
+| `Color:` | `#818cf8` | Card border, glow, terminal cursor accent |
 
 ---
 
@@ -713,6 +727,6 @@ If ClawHive is useful to you, consider giving it a star -- it helps others disco
 
 [![Star this repo](https://img.shields.io/github/stars/Source-Code-Alpha/ClawHive?style=social)](https://github.com/Source-Code-Alpha/ClawHive)
 
-<img src="https://capsule-render.vercel.app/api?type=waving&color=0:7c4dff,100:00d4ff&height=100&section=footer" width="100%"/>
+<img src="https://capsule-render.vercel.app/api?type=waving&color=0:818cf8,100:38bdf8&height=100&section=footer" width="100%"/>
 
 </div>
