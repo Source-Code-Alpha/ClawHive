@@ -4,8 +4,8 @@
   "description": "AI Agent Dashboard",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#04040c",
-  "theme_color": "#7c4dff",
+  "background_color": "#050509",
+  "theme_color": "#818cf8",
   "icons": [
     { "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml" }
   ]

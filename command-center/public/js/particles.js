@@ -1,4 +1,4 @@
-// Subtle floating particle dots -- mission control aesthetic
+// Subtle floating particle dots -- refined ambient effect
 // Respects prefers-reduced-motion (#18)
 (function() {
   const canvas = document.getElementById('particles');
@@ -13,7 +13,7 @@
   const ctx = canvas.getContext('2d');
   let w, h;
   const particles = [];
-  const COUNT = 40;
+  const COUNT = 30;
   let running = true;
 
   function resize() {
@@ -27,10 +27,10 @@
       particles.push({
         x: Math.random() * w,
         y: Math.random() * h,
-        r: Math.random() * 1.5 + 0.5,
-        dx: (Math.random() - 0.5) * 0.3,
-        dy: (Math.random() - 0.5) * 0.2,
-        alpha: Math.random() * 0.4 + 0.1,
+        r: Math.random() * 1.2 + 0.3,
+        dx: (Math.random() - 0.5) * 0.15,
+        dy: (Math.random() - 0.5) * 0.1,
+        alpha: Math.random() * 0.3 + 0.05,
         pulse: Math.random() * Math.PI * 2,
       });
     }
@@ -42,17 +42,17 @@
     for (const p of particles) {
       p.x += p.dx;
       p.y += p.dy;
-      p.pulse += 0.015;
+      p.pulse += 0.008;
 
       if (p.x < -10) p.x = w + 10;
       if (p.x > w + 10) p.x = -10;
       if (p.y < -10) p.y = h + 10;
       if (p.y > h + 10) p.y = -10;
 
-      const a = p.alpha * (0.6 + 0.4 * Math.sin(p.pulse));
+      const a = p.alpha * (0.5 + 0.5 * Math.sin(p.pulse));
       ctx.beginPath();
       ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
-      ctx.fillStyle = `rgba(124, 77, 255, ${a})`;
+      ctx.fillStyle = `rgba(129, 140, 248, ${a})`;
       ctx.fill();
     }
     requestAnimationFrame(draw);

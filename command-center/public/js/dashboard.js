@@ -80,11 +80,11 @@ const agentCategories = {
 };
 
 const categoryColors = {
-  engineering: '#7c4dff',
-  operations:  '#ff6d00',
-  social:      '#ec4899',
-  research:    '#00bcd4',
-  personal:    '#00e676',
+  engineering: '#818cf8',
+  operations:  '#fb923c',
+  social:      '#f472b6',
+  research:    '#22d3ee',
+  personal:    '#34d399',
 };
 
 const categoryOrder = ['engineering', 'operations', 'social', 'research', 'personal'];
@@ -100,7 +100,7 @@ const categoryLabels = {
 // Accent colors are read dynamically from each agent's IDENTITY.md (Color: field).
 // This fallback map is only used when an agent has no Color defined.
 const agentAccentColors = {
-  coding: '#7c4dff', researcher: '#059669', designer: '#a855f7',
+  coding: '#818cf8', researcher: '#059669', designer: '#a855f7',
   auditor: '#22c55e', finance: '#eab308', social: '#ec4899',
   life: '#34d399', prompter: '#f59e0b',
 };
@@ -296,7 +296,7 @@ function renderAgentGrid(agentList) {
     const group = groups[cat];
     if (!group || group.length === 0) continue;
 
-    const catColor = categoryColors[cat] || '#7c4dff';
+    const catColor = categoryColors[cat] || '#818cf8';
 
     // Category header
     html += `
@@ -431,23 +431,23 @@ async function launchAgent(agentId, topic, initialPrompt) {
 // ── Terminal Management ────────────────────────────────────────
 function createTerminal(sessionId, agentId, topic) {
   const agent = agents.find(a => a.id === agentId) || { name: agentId, emoji: '🤖' };
-  const accent = agent.color || agentAccentColors[agentId] || '#7c4dff';
+  const accent = agent.color || agentAccentColors[agentId] || '#818cf8';
 
   const terminal = new window.Terminal({
     fontFamily: "'JetBrains Mono', 'Cascadia Code', 'Fira Code', monospace",
     fontSize: 14,
     lineHeight: 1.3,
     theme: {
-      background: '#06060e',
-      foreground: '#e0e0f0',
+      background: '#050508',
+      foreground: '#e4e4ec',
       cursor: accent,
-      cursorAccent: '#06060e',
+      cursorAccent: '#050508',
       selectionBackground: `${accent}40`,
       black: '#1a1a2e', brightBlack: '#4a4a6e',
       red: '#ff5555', brightRed: '#ff6e6e',
       green: '#50fa7b', brightGreen: '#69ff94',
       yellow: '#f1fa8c', brightYellow: '#ffffa5',
-      blue: '#7c4dff', brightBlue: '#a78bff',
+      blue: '#818cf8', brightBlue: '#a78bff',
       magenta: '#ff79c6', brightMagenta: '#ff92df',
       cyan: '#8be9fd', brightCyan: '#a4ffff',
       white: '#f8f8f2', brightWhite: '#ffffff',
@@ -575,7 +575,7 @@ function switchToSession(sessionId) {
   }
 
   // Set accent color on terminal header
-  const accent = entry.accent || '#7c4dff';
+  const accent = entry.accent || '#818cf8';
   document.getElementById('terminal-header-bar').style.borderBottomColor = accent + '40';
 
   document.getElementById('dashboard-view').classList.remove('active');
@@ -1085,7 +1085,7 @@ document.addEventListener('DOMContentLoaded', () => {
 // ── Settings Panel (B3 #20) ─────────────────────────────────────
 async function openSettings() {
   document.getElementById('settings-notifications').checked = notificationsEnabled;
-  document.getElementById('settings-accent').value = localStorage.getItem('customAccent') || '#7c4dff';
+  document.getElementById('settings-accent').value = localStorage.getItem('customAccent') || '#818cf8';
   document.getElementById('settings-overlay').classList.add('open');
 
   // Load webhooks
@@ -1123,7 +1123,7 @@ function resetCustomAccent() {
   document.documentElement.style.removeProperty('--accent-soft');
   document.documentElement.style.removeProperty('--accent-glow');
   localStorage.removeItem('customAccent');
-  document.getElementById('settings-accent').value = '#7c4dff';
+  document.getElementById('settings-accent').value = '#818cf8';
 }
 // Apply on load
 const savedAccent = localStorage.getItem('customAccent');
@@ -1946,18 +1946,18 @@ function updateFaviconBadge(count) {
   canvas.height = 64;
   const ctx = canvas.getContext('2d');
   // Draw base icon
-  ctx.fillStyle = '#06060f';
+  ctx.fillStyle = '#050509';
   ctx.beginPath();
   ctx.arc(32, 32, 30, 0, Math.PI * 2);
   ctx.fill();
   const grad = ctx.createLinearGradient(0, 0, 64, 64);
-  grad.addColorStop(0, '#7c4dff');
-  grad.addColorStop(1, '#00d4ff');
+  grad.addColorStop(0, '#818cf8');
+  grad.addColorStop(1, '#38bdf8');
   ctx.strokeStyle = grad;
-  ctx.lineWidth = 2;
+  ctx.lineWidth = 1.5;
   ctx.stroke();
   // Draw badge
-  ctx.fillStyle = '#00e676';
+  ctx.fillStyle = '#34d399';
   ctx.beginPath();
   ctx.arc(52, 12, 12, 0, Math.PI * 2);
   ctx.fill();
