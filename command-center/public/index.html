@@ -3,423 +3,658 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
-  <meta name="theme-color" content="#050509">
+  <meta name="theme-color" content="#0b0709">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <title>Agent Command Center</title>
+  <title>The Hive — Soha Command Center</title>
   <link rel="manifest" href="/manifest.json">
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,300;14..32,400;14..32,500;14..32,600;14..32,700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght,SOFT,WONK@0,9..144,300..900,0..100,0..1;1,9..144,300..900,0..100,0..1&family=Manrope:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
   <link rel="stylesheet" href="/css/style.css">
 </head>
-<body>
-  <!-- Animated background layers -->
-  <div class="bg-mesh"></div>
-  <canvas id="particles" class="particles-canvas"></canvas>
-  <div class="noise-overlay"></div>
+<body data-view="hive">
 
-  <!-- Main app container -->
-  <div id="app">
-    <!-- Header -->
-    <header class="header">
-      <div class="header-left">
-        <div class="logo-mark">
-          <div class="logo-ring"></div>
-          <span class="logo-icon">&#x2726;</span>
-        </div>
-        <div class="logo-text-group">
-          <h1 class="logo-text">Command Center</h1>
-          <span class="logo-sub">clawhive</span>
-        </div>
-      </div>
-      <div class="header-center">
-        <div class="filter-chips" id="filter-chips">
-          <button class="chip active" data-filter="all">All</button>
-          <button class="chip" data-filter="engineering">Engineering</button>
-          <button class="chip" data-filter="operations">Operations</button>
-          <button class="chip" data-filter="social">Social</button>
-          <button class="chip" data-filter="research">Research</button>
-          <button class="chip" data-filter="personal">Personal</button>
-          <button class="chip" data-filter="active">Active</button>
-        </div>
-      </div>
-      <div class="header-right">
-        <div class="header-controls">
-          <button class="icon-btn" title="Topics" onclick="openTopics()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg></button>
-          <button class="icon-btn" title="Skills" onclick="openSkills()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg></button>
-          <button class="icon-btn" title="Activity" onclick="toggleActivityFeed()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg></button>
-          <button class="icon-btn" title="Agent Health" onclick="openAgentHealth()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z"/></svg></button>
-          <button class="icon-btn" id="view-toggle" title="Toggle compact view" onclick="toggleViewMode()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M3 12h18M3 18h18"/></svg></button>
-          <button class="icon-btn" id="theme-toggle" title="Cycle theme" onclick="cycleTheme()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 0 0 18V3z" fill="currentColor"/></svg></button>
-          <button class="icon-btn" title="Settings" onclick="openSettings()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg></button>
-        </div>
-        <div class="session-counter">
-          <span class="pulse-dot"></span>
-          <span id="session-count">0</span><span class="session-max"> / 8</span>
-        </div>
-        <kbd class="kbd-hint" title="Focus search">/</kbd>
-      </div>
-    </header>
-
-    <!-- Stats bar (#3) -->
-    <div id="stats-bar" class="stats-bar" style="display:none"></div>
-
-    <!-- Dashboard view -->
-    <div id="dashboard-view" class="view active">
-      <div class="search-row">
-        <div class="search-bar">
-          <svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
-          <input type="text" id="agent-search" placeholder="Search agents... ( / )" autocomplete="off" spellcheck="false">
-        </div>
-        <select id="sort-select" class="sort-select" onchange="changeSort(this.value)">
-          <option value="name">A-Z</option>
-          <option value="category">Category</option>
-          <option value="topics">Topics</option>
-        </select>
-      </div>
-      <!-- Skeleton loading -->
-      <div id="skeleton-grid" class="agent-grid">
-        <div class="agent-card skeleton"><div class="skeleton-emoji"></div><div class="skeleton-line w60"></div><div class="skeleton-line w80"></div></div>
-        <div class="agent-card skeleton"><div class="skeleton-emoji"></div><div class="skeleton-line w60"></div><div class="skeleton-line w80"></div></div>
-        <div class="agent-card skeleton"><div class="skeleton-emoji"></div><div class="skeleton-line w60"></div><div class="skeleton-line w80"></div></div>
-        <div class="agent-card skeleton"><div class="skeleton-emoji"></div><div class="skeleton-line w60"></div><div class="skeleton-line w80"></div></div>
-        <div class="agent-card skeleton"><div class="skeleton-emoji"></div><div class="skeleton-line w60"></div><div class="skeleton-line w80"></div></div>
-        <div class="agent-card skeleton"><div class="skeleton-emoji"></div><div class="skeleton-line w60"></div><div class="skeleton-line w80"></div></div>
-      </div>
-      <!-- Recent Sessions (#8) -->
-      <div id="recent-sessions" class="recent-sessions" style="display:none">
-        <div class="recent-header">
-          <span class="category-label" style="color:var(--text-muted)">Recent Sessions</span>
-          <div class="category-line"></div>
-        </div>
-        <div id="recent-sessions-list" class="recent-list"></div>
-      </div>
-      <div id="agent-grid" class="agent-grid" style="display:none"></div>
-    </div>
-
-    <!-- Agent Detail Panel (#3) -->
-    <div id="agent-detail" class="detail-panel">
-      <div class="detail-header">
-        <span id="detail-emoji" class="detail-emoji"></span>
-        <div>
-          <div id="detail-name" class="detail-name"></div>
-          <div id="detail-role" class="detail-role"></div>
-        </div>
-        <button class="detail-close" onclick="closeDetailPanel()">&#215;</button>
-      </div>
-      <div id="detail-vibe" class="detail-vibe"></div>
-      <div class="detail-section">
-        <div class="detail-label">Topics</div>
-        <div id="detail-topics" class="detail-topics"></div>
-      </div>
-      <div class="detail-section">
-        <div class="detail-label">Category</div>
-        <div id="detail-category" class="detail-category-val"></div>
-      </div>
-      <div class="detail-section" id="detail-metrics-section">
-        <div class="detail-label">Activity (last 7 days)</div>
-        <div id="detail-metrics" class="detail-metrics"></div>
-      </div>
-      <div style="display:flex;gap:8px;margin-top:auto">
-        <button id="detail-inspect" class="detail-launch-btn" style="flex:1;background:transparent;border-color:var(--border-hover);color:var(--text-secondary)">Inspect Files</button>
-        <button id="detail-launch" class="detail-launch-btn" style="flex:1">Launch</button>
-      </div>
-    </div>
-
-    <!-- Agent Health Panel (B5 #6) -->
-    <div id="health-overlay" class="inspector-overlay">
-      <div class="inspector-panel">
-        <div class="inspector-header">
-          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
-          <div>
-            <div class="inspector-name">Agent Health</div>
-            <div class="inspector-sub" id="health-summary">SCANNING...</div>
-          </div>
-          <button class="detail-close" onclick="closeAgentHealth()">&#215;</button>
-        </div>
-        <div id="health-list" class="inspector-body" style="overflow-y:auto;flex-direction:column;padding:12px"></div>
-      </div>
-    </div>
-
-    <!-- Skill Execution (B4 #11) -->
-    <div id="skillexec-overlay" class="modal-overlay" onclick="if(event.target===this)closeSkillExec()">
-      <div class="modal-content" style="max-width:680px;width:90%" onclick="event.stopPropagation()">
-        <h3 id="skillexec-title"></h3>
-        <p class="modal-subtitle">Optional arguments (space-separated)</p>
-        <input id="skillexec-args" type="text" placeholder="e.g. --verbose input.txt" class="palette-input" style="border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px 14px;font-size:13px;width:100%;margin-top:8px">
-        <div style="display:flex;gap:8px;margin-top:10px">
-          <button class="detail-launch-btn" onclick="closeSkillExec()" style="flex:1;background:transparent;border-color:var(--border-hover);color:var(--text-secondary)">Cancel</button>
-          <button id="skillexec-run" class="detail-launch-btn" onclick="runSkill()" style="flex:1">Run Skill</button>
-        </div>
-        <pre id="skillexec-output" class="inspector-view" style="display:none;margin-top:14px;max-height:340px;border-radius:var(--radius-sm);border:1px solid var(--border)"></pre>
-      </div>
-    </div>
-
-    <!-- Today's Digest (B4 #5) -->
-    <div id="digest-overlay" class="modal-overlay" onclick="if(event.target===this)closeDigest()">
-      <div class="modal-content" style="max-width:560px;width:90%" onclick="event.stopPropagation()">
-        <h3>Today's Activity</h3>
-        <p class="modal-subtitle" id="digest-date"></p>
-        <div id="digest-content" style="margin-top:14px;display:flex;flex-direction:column;gap:14px"></div>
-      </div>
-    </div>
-
-    <!-- Session History Search (B4 #2) -->
-    <div id="history-search-overlay" class="inspector-overlay">
-      <div class="inspector-panel" style="max-height:600px">
-        <div class="inspector-header">
-          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
-          <div>
-            <div class="inspector-name">Session History Search</div>
-            <div class="inspector-sub">FULL-TEXT SEARCH</div>
-          </div>
-          <button class="detail-close" onclick="closeHistorySearch()">&#215;</button>
-        </div>
-        <div style="padding:14px 24px;border-bottom:1px solid var(--border)">
-          <input id="history-search-input" type="text" placeholder="Search across all session logs..." class="palette-input" style="border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px 14px;font-size:13px;width:100%">
-        </div>
-        <div id="history-search-results" class="inspector-body" style="overflow-y:auto;flex-direction:column;padding:12px"></div>
-      </div>
-    </div>
-
-    <!-- Onboarding Tour (B3 #13) -->
-    <div id="tour-overlay" class="tour-overlay">
-      <div class="tour-card">
-        <div class="tour-step" id="tour-step-num">Step 1 of 5</div>
-        <h2 id="tour-title"></h2>
-        <p id="tour-text"></p>
-        <div class="tour-actions">
-          <button class="tour-btn secondary" onclick="skipTour()">Skip</button>
-          <button class="tour-btn" id="tour-next" onclick="nextTourStep()">Next</button>
-        </div>
-      </div>
-    </div>
-
-    <!-- Settings Panel (B3 #20) -->
-    <div id="settings-overlay" class="modal-overlay" onclick="if(event.target===this)closeSettings()">
-      <div class="modal-content" style="max-width:480px;width:90%" onclick="event.stopPropagation()">
-        <h3>Settings</h3>
-        <p class="modal-subtitle">Customize your command center</p>
-        <div style="display:flex;flex-direction:column;gap:14px;margin-top:14px">
-          <div>
-            <div class="detail-label">Theme</div>
-            <div style="display:flex;gap:6px;margin-top:6px">
-              <button class="settings-theme-btn" data-theme="midnight" onclick="applyTheme('midnight')">Midnight</button>
-              <button class="settings-theme-btn" data-theme="ocean" onclick="applyTheme('ocean')">Ocean</button>
-              <button class="settings-theme-btn" data-theme="obsidian" onclick="applyTheme('obsidian')">Obsidian</button>
-            </div>
-          </div>
-          <div>
-            <div class="detail-label">View Mode</div>
-            <div style="display:flex;gap:6px;margin-top:6px">
-              <button class="settings-theme-btn" onclick="if(viewMode!=='grid')toggleViewMode()">Grid</button>
-              <button class="settings-theme-btn" onclick="if(viewMode!=='compact')toggleViewMode()">Compact</button>
-            </div>
-          </div>
-          <div>
-            <div class="detail-label">Custom Accent Color</div>
-            <div style="display:flex;align-items:center;gap:10px;margin-top:6px">
-              <input type="color" id="settings-accent" value="#818cf8" onchange="setCustomAccent(this.value)" style="width:40px;height:40px;border:none;border-radius:var(--radius-xs);cursor:pointer;background:transparent">
-              <button class="settings-theme-btn" onclick="resetCustomAccent()" style="flex:none;padding:8px 14px">Reset</button>
-            </div>
-          </div>
-          <div>
-            <div class="detail-label">Notifications</div>
-            <label style="display:flex;align-items:center;gap:8px;margin-top:6px;font-size:13px;color:var(--text-secondary);cursor:pointer">
-              <input type="checkbox" id="settings-notifications" onchange="toggleNotifications(this.checked)"> Browser notifications when sessions end
-            </label>
-          </div>
-          <div>
-            <div class="detail-label">Outgoing Webhooks</div>
-            <textarea id="settings-webhooks" rows="3" placeholder="https://example.com/hook (one per line)" style="margin-top:6px;width:100%;padding:8px 12px;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--bg-surface);color:var(--text);font-family:var(--font-mono);font-size:11px;outline:none;resize:vertical"></textarea>
-            <button class="settings-theme-btn" onclick="saveWebhooks()" style="margin-top:6px">Save Webhooks</button>
-          </div>
-          <div>
-            <div class="detail-label">Webhook Receiver Secret</div>
-            <code id="settings-webhook-secret" style="display:block;margin-top:6px;font-size:11px;padding:8px 12px;background:var(--bg-surface);border-radius:var(--radius-xs);color:var(--text-muted);user-select:all">loading...</code>
-            <div style="font-size:10px;color:var(--text-dim);margin-top:4px">POST to /api/webhooks/{secret}/{agent} with {"prompt": "..."}</div>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Quick Chat Modal (B3 #7) -->
-    <div id="quickchat-overlay" class="modal-overlay" onclick="if(event.target===this)closeQuickChat()">
-      <div class="modal-content" style="max-width:600px;width:90%" onclick="event.stopPropagation()">
-        <h3 id="quickchat-title"></h3>
-        <p class="modal-subtitle">One-shot prompt — get an inline response without a full session</p>
-        <textarea id="quickchat-input" class="prompt-textarea" placeholder="Ask a quick question..." rows="3" style="margin-top:10px"></textarea>
-        <div style="display:flex;gap:8px;margin-top:10px">
-          <button class="detail-launch-btn" onclick="closeQuickChat()" style="flex:1;background:transparent;border-color:var(--border-hover);color:var(--text-secondary)">Cancel</button>
-          <button id="quickchat-send" class="detail-launch-btn" onclick="sendQuickChat()" style="flex:1">Send</button>
-        </div>
-        <div id="quickchat-response" class="inspector-view" style="display:none;margin-top:14px;max-height:300px;border-radius:var(--radius-sm);border:1px solid var(--border)"></div>
-      </div>
-    </div>
-
-    <!-- Topic Browser (#4) -->
-    <div id="topics-overlay" class="inspector-overlay">
-      <div class="inspector-panel">
-        <div class="inspector-header">
-          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg>
-          <div>
-            <div class="inspector-name">Topics</div>
-            <div class="inspector-sub" id="topics-count"></div>
-          </div>
-          <button class="detail-close" onclick="closeTopics()">&#215;</button>
-        </div>
-        <div style="padding:12px 24px;border-bottom:1px solid var(--border)">
-          <input id="topics-search" type="text" placeholder="Search topics..." class="palette-input" style="border:1px solid var(--border);border-radius:var(--radius-sm);padding:8px 12px;font-size:13px">
-        </div>
-        <div id="topics-list" class="inspector-body" style="overflow-y:auto;flex-direction:column;padding:12px"></div>
-      </div>
-    </div>
-
-    <!-- Skills Catalog (#5) -->
-    <div id="skills-overlay" class="inspector-overlay">
-      <div class="inspector-panel">
-        <div class="inspector-header">
-          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2"><path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/></svg>
-          <div>
-            <div class="inspector-name">Skills Catalog</div>
-            <div class="inspector-sub" id="skills-count"></div>
-          </div>
-          <button class="detail-close" onclick="closeSkills()">&#215;</button>
-        </div>
-        <div style="padding:12px 24px;border-bottom:1px solid var(--border)">
-          <input id="skills-search" type="text" placeholder="Search skills..." class="palette-input" style="border:1px solid var(--border);border-radius:var(--radius-sm);padding:8px 12px;font-size:13px">
-        </div>
-        <div class="inspector-body">
-          <aside class="inspector-list" id="skills-list" style="width:280px"></aside>
-          <main class="inspector-content">
-            <div class="inspector-toolbar"><span id="skills-current">Select a skill</span></div>
-            <pre id="skills-view" class="inspector-view"></pre>
-          </main>
-        </div>
-      </div>
-    </div>
-
-    <!-- Activity Feed (#6) -->
-    <aside id="activity-feed" class="activity-feed">
-      <div class="activity-header">
-        <span style="font-weight:600;font-size:13px">Activity</span>
-        <button class="detail-close" onclick="toggleActivityFeed()">&#215;</button>
-      </div>
-      <div id="activity-list" class="activity-list"></div>
-    </aside>
-
-    <!-- Workspace Inspector (#1, #2, #3) -->
-    <div id="inspector-overlay" class="inspector-overlay">
-      <div class="inspector-panel">
-        <div class="inspector-header">
-          <span id="inspector-emoji" class="inspector-emoji"></span>
-          <div>
-            <div id="inspector-name" class="inspector-name"></div>
-            <div class="inspector-sub">Workspace Inspector</div>
-          </div>
-          <button class="detail-close" onclick="closeInspector()">&#215;</button>
-        </div>
-        <div class="inspector-tabs">
-          <button class="inspector-tab active" data-section="files" onclick="inspectorShowSection('files')">Files</button>
-          <button class="inspector-tab" data-section="memory" onclick="inspectorShowSection('memory')">Memory</button>
-          <button class="inspector-tab" data-section="topics" onclick="inspectorShowSection('topics')">Topics</button>
-        </div>
-        <div class="inspector-body">
-          <aside class="inspector-list" id="inspector-list"></aside>
-          <main class="inspector-content">
-            <div class="inspector-toolbar">
-              <span id="inspector-current"></span>
-              <div style="margin-left:auto;display:flex;gap:6px">
-                <button id="inspector-edit-btn" class="icon-btn" onclick="inspectorToggleEdit()" title="Edit (E)" style="display:none"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
-                <button id="inspector-save-btn" class="icon-btn" onclick="inspectorSave()" title="Save (Ctrl+S)" style="display:none"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg></button>
-              </div>
-            </div>
-            <pre id="inspector-view" class="inspector-view"></pre>
-            <textarea id="inspector-editor" class="inspector-editor" style="display:none"></textarea>
-          </main>
-        </div>
-      </div>
-    </div>
-
-    <!-- Terminal view -->
-    <div id="terminal-view" class="view">
-      <div class="terminal-header" id="terminal-header-bar">
-        <!-- Breadcrumbs (#10) -->
-        <nav class="breadcrumbs">
-          <button class="breadcrumb-link" onclick="showDashboard()">Dashboard</button>
-          <span class="breadcrumb-sep">/</span>
-          <span id="breadcrumb-agent" class="breadcrumb-current"></span>
-          <span id="breadcrumb-topic-sep" class="breadcrumb-sep" style="display:none">/</span>
-          <span id="breadcrumb-topic" class="breadcrumb-topic"></span>
-        </nav>
-        <div class="terminal-actions">
-          <button class="icon-btn" id="voice-btn" onclick="toggleVoiceInput()" title="Voice input (push-to-talk)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"/><path d="M19 10v2a7 7 0 01-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg></button>
-          <button class="icon-btn" id="tts-btn" onclick="toggleTTS()" title="Read terminal output aloud"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 010 7.07"/><path d="M19.07 4.93a10 10 0 010 14.14"/></svg></button>
-          <button class="icon-btn" onclick="shareCurrentSession()" title="Share session"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg></button>
-          <button class="icon-btn" onclick="toggleTerminalSearch()" title="Search (Ctrl+F)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg></button>
-          <button class="icon-btn" id="autoscroll-btn" onclick="toggleAutoScroll()" title="Auto-scroll"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12l7 7 7-7"/></svg></button>
-          <button class="icon-btn" onclick="exportSession()" title="Export output"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg></button>
-          <button class="kill-btn" onclick="killCurrentSession()" title="End session">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
-            End
-          </button>
-        </div>
-      </div>
-      <!-- Terminal search bar (#13) -->
-      <div id="terminal-search-bar" class="terminal-search-bar" style="display:none">
-        <input id="terminal-search-input" type="text" placeholder="Search in terminal..." autocomplete="off" spellcheck="false">
-        <span id="terminal-search-count" class="search-count"></span>
-        <button onclick="termSearchPrev()" title="Previous"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 15l-6-6-6 6"/></svg></button>
-        <button onclick="termSearchNext()" title="Next"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 9l6 6 6-6"/></svg></button>
-        <button onclick="closeTerminalSearch()" title="Close"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
-      </div>
-      <div id="terminal-container"></div>
-    </div>
-
-    <!-- Session tabs (bottom bar) -->
-    <div id="session-tabs" class="session-tabs"></div>
+  <!-- ════════════════════════════════════════════════════
+       ATMOSPHERIC LAYERS
+       ════════════════════════════════════════════════════ -->
+  <div class="sky" aria-hidden="true">
+    <div class="sky-grad"></div>
+    <div class="sky-mesh"></div>
+    <canvas id="particles" class="sky-particles"></canvas>
+    <div class="sky-grain"></div>
+    <div class="sky-aura" id="sky-aura"></div>
   </div>
 
-  <!-- Topic modal -->
-  <div id="topic-modal" class="modal-overlay" onclick="closeTopicModal(event)">
-    <div class="modal-content" onclick="event.stopPropagation()">
-      <h3 id="topic-modal-title"></h3>
-      <p class="modal-subtitle">Select a topic or launch without one</p>
-      <div id="topic-list" class="topic-list"></div>
-      <button class="topic-btn topic-btn-default" onclick="launchAgent(selectedAgentId)">
-        Launch general session
+  <!-- ════════════════════════════════════════════════════
+       TOP BAR — minimal, floating, honey-trimmed
+       ════════════════════════════════════════════════════ -->
+  <header class="topbar">
+    <div class="topbar-left">
+      <button class="hex-logo" title="The Hive" onclick="showHive()" aria-label="Home">
+        <svg viewBox="0 0 40 46" width="28" height="32">
+          <polygon points="20,2 38,11 38,35 20,44 2,35 2,11"
+                   fill="none" stroke="currentColor" stroke-width="1.6"/>
+          <polygon points="20,10 31,15.5 31,30.5 20,36 9,30.5 9,15.5"
+                   fill="currentColor" opacity=".14"/>
+          <circle cx="20" cy="23" r="3.3" fill="currentColor"/>
+        </svg>
       </button>
+      <div class="brand">
+        <div class="brand-name">The Hive</div>
+        <div class="brand-sub"><span id="fleet-count">…</span> agents · <span class="brand-host">ai.nuc</span></div>
+      </div>
+    </div>
+
+    <div class="topbar-center">
+      <div class="incantation" onclick="openIncantation()" role="button" tabindex="0">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 2l2 6 6 2-6 2-2 6-2-6-6-2 6-2 2-6z"/></svg>
+        <span class="incantation-text">Speak the incantation…</span>
+        <kbd>⌘K</kbd>
+      </div>
+    </div>
+
+    <div class="topbar-right">
+      <nav class="tool-rail" aria-label="Toolbar">
+        <button class="tool" title="Switch view (H · G · L)" onclick="cycleView()">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 3v18M3 12h18"/></svg>
+          <span id="view-mode-label">Hive</span>
+        </button>
+        <button class="tool" title="Memory Garden" onclick="openMemoryGarden()">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 2v20M5 9a7 7 0 0 1 14 0M5 15a7 7 0 0 0 14 0"/></svg>
+        </button>
+        <button class="tool" title="Time River (scrub timeline)" onclick="toggleTimeRiver()">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 14c3 0 3-4 6-4s3 4 6 4 3-4 6-4M2 18c3 0 3-4 6-4s3 4 6 4 3-4 6-4"/></svg>
+        </button>
+        <button class="tool" title="Swarm Dispatch" onclick="openSwarm()">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="6" cy="6" r="2"/><circle cx="18" cy="6" r="2"/><circle cx="6" cy="18" r="2"/><circle cx="18" cy="18" r="2"/><circle cx="12" cy="12" r="3"/><path d="M8 7l3 3M16 7l-3 3M8 17l3-3M16 17l-3-3"/></svg>
+        </button>
+        <button class="tool" title="Skills catalog" onclick="openSkills()">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 2l2.5 6.5L21 10l-5 4.5L17.5 21 12 17.5 6.5 21 8 14.5 3 10l6.5-1.5z"/></svg>
+        </button>
+        <button class="tool" title="Topics" onclick="openTopics()">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+        </button>
+        <button class="tool" title="Agent Health" onclick="openAgentHealth()">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+        </button>
+        <button class="tool" title="Activity feed" onclick="toggleActivityFeed()">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="2"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4M5 5l3 3M16 16l3 3M5 19l3-3M16 8l3-3"/></svg>
+        </button>
+        <button class="tool" title="Settings" onclick="openSettings()">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5L19 19M5 19l1.5-1.5M17.5 6.5L19 5"/></svg>
+        </button>
+      </nav>
+      <div class="pulse-status" title="Fleet pulse — live">
+        <span class="pulse-dot"></span>
+        <span id="pulse-count">0</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- ════════════════════════════════════════════════════
+       PULSE CORE — central fleet heartbeat (visible in Hive view)
+       ════════════════════════════════════════════════════ -->
+  <div id="pulse-core" class="pulse-core" aria-hidden="true">
+    <svg viewBox="-100 -100 200 200" width="100%" height="100%">
+      <defs>
+        <radialGradient id="coreGrad" cx="50%" cy="50%" r="50%">
+          <stop offset="0%"  stop-color="var(--glow-core)" stop-opacity=".85"/>
+          <stop offset="55%" stop-color="var(--glow-core)" stop-opacity=".12"/>
+          <stop offset="100%" stop-color="transparent"/>
+        </radialGradient>
+      </defs>
+      <circle cx="0" cy="0" r="90" fill="url(#coreGrad)"/>
+      <circle id="pulse-ring-1" cx="0" cy="0" r="40" fill="none" stroke="var(--glow-core)" stroke-width="0.8" opacity=".55"/>
+      <circle id="pulse-ring-2" cx="0" cy="0" r="58" fill="none" stroke="var(--honey)" stroke-width="0.6" opacity=".4"/>
+      <g id="pulse-spokes"></g>
+      <circle id="pulse-heart" cx="0" cy="0" r="11" fill="var(--glow-core)"/>
+    </svg>
+    <div class="pulse-core-stats">
+      <div class="pcs-row"><span class="pcs-k">Active</span><span id="pcs-active" class="pcs-v">0</span></div>
+      <div class="pcs-row"><span class="pcs-k">Agents</span><span id="pcs-agents" class="pcs-v">—</span></div>
+      <div class="pcs-row"><span class="pcs-k">Today</span><span id="pcs-events" class="pcs-v">—</span></div>
     </div>
   </div>
 
-  <!-- Command Palette (#1) -->
-  <div id="palette-overlay" class="palette-overlay">
-    <div class="palette-box">
-      <input id="palette-input" class="palette-input" type="text" placeholder="Search agents, topics, commands..." autocomplete="off" spellcheck="false">
-      <div id="palette-list" class="palette-list"></div>
+  <!-- ════════════════════════════════════════════════════
+       VIEW: HIVE CONSTELLATION — primary
+       ════════════════════════════════════════════════════ -->
+  <main id="view-hive" class="view hive active" role="region" aria-label="Hive constellation">
+    <div class="hive-toolbar">
+      <div class="filter-ring" id="filter-ring" role="tablist">
+        <button class="ring-chip active" data-filter="all">All</button>
+        <button class="ring-chip" data-filter="engineering">Engineering</button>
+        <button class="ring-chip" data-filter="operations">Operations</button>
+        <button class="ring-chip" data-filter="social">Social</button>
+        <button class="ring-chip" data-filter="research">Research</button>
+        <button class="ring-chip" data-filter="personal">Personal</button>
+        <button class="ring-chip" data-filter="active">Active</button>
+      </div>
+      <div class="hive-search">
+        <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.3-4.3"/></svg>
+        <input id="hive-search-input" type="text" placeholder="Find a cell…" autocomplete="off" spellcheck="false">
+        <kbd>/</kbd>
+      </div>
     </div>
+
+    <svg id="hive-map" class="hive-map" aria-label="Agent constellation">
+      <defs>
+        <filter id="softglow" x="-50%" y="-50%" width="200%" height="200%">
+          <feGaussianBlur stdDeviation="3" result="blur"/>
+          <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+        </filter>
+        <radialGradient id="cellIdle" cx="50%" cy="50%" r="50%">
+          <stop offset="0%" stop-color="#1f1410"/>
+          <stop offset="100%" stop-color="#0d0708"/>
+        </radialGradient>
+      </defs>
+      <g id="hive-bridges" class="hive-bridges"></g>
+      <g id="hive-cells" class="hive-cells"></g>
+      <g id="hive-labels" class="hive-labels"></g>
+    </svg>
+
+    <!-- Skeleton shimmer while loading -->
+    <div id="hive-loading" class="hive-loading">
+      <div class="hive-loading-honeycomb">
+        <div></div><div></div><div></div>
+        <div></div><div></div><div></div>
+        <div></div><div></div><div></div>
+      </div>
+      <div class="hive-loading-text">Summoning the swarm…</div>
+    </div>
+  </main>
+
+  <!-- ════════════════════════════════════════════════════
+       VIEW: GRID — familiar card layout (fallback)
+       ════════════════════════════════════════════════════ -->
+  <main id="view-grid" class="view grid" role="region" aria-label="Grid view" hidden>
+    <div class="grid-toolbar">
+      <div class="search-bar">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.3-4.3"/></svg>
+        <input id="grid-search-input" type="text" placeholder="Search agents…" autocomplete="off">
+      </div>
+      <select id="grid-sort" class="grid-sort" onchange="changeSort(this.value)">
+        <option value="name">A–Z</option>
+        <option value="category">Category</option>
+        <option value="activity">Most active</option>
+      </select>
+    </div>
+    <div id="grid-container" class="grid-container"></div>
+  </main>
+
+  <!-- ════════════════════════════════════════════════════
+       VIEW: LIST — dense table (power users)
+       ════════════════════════════════════════════════════ -->
+  <main id="view-list" class="view list" role="region" aria-label="List view" hidden>
+    <table class="list-table">
+      <thead>
+        <tr><th></th><th>Agent</th><th>Role</th><th>Category</th><th>Topics</th><th>State</th><th></th></tr>
+      </thead>
+      <tbody id="list-body"></tbody>
+    </table>
+  </main>
+
+  <!-- ════════════════════════════════════════════════════
+       VIEW: TERMINAL — xterm session
+       ════════════════════════════════════════════════════ -->
+  <main id="view-terminal" class="view terminal" role="region" aria-label="Terminal session" hidden>
+    <div class="term-topbar">
+      <nav class="breadcrumbs">
+        <button class="crumb" onclick="showHive()">Hive</button>
+        <span class="crumb-sep">›</span>
+        <span id="crumb-agent" class="crumb-current"></span>
+        <span id="crumb-topic-sep" class="crumb-sep" hidden>›</span>
+        <span id="crumb-topic" class="crumb-topic"></span>
+      </nav>
+      <div class="term-actions">
+        <button class="term-btn" id="voice-btn" onclick="toggleVoiceInput()" title="Voice input">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><path d="M12 19v4M8 23h8"/></svg>
+        </button>
+        <button class="term-btn" id="tts-btn" onclick="toggleTTS()" title="Read output aloud">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19"/><path d="M15.5 8.5a5 5 0 0 1 0 7M19 4.9a10 10 0 0 1 0 14.1"/></svg>
+        </button>
+        <button class="term-btn" onclick="toggleFocusMode()" title="Focus Chamber (F)">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 4l5 5M20 4l-5 5M4 20l5-5M20 20l-5-5"/></svg>
+        </button>
+        <button class="term-btn" onclick="shareCurrentSession()" title="Share">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.6 13.5l6.8 4M15.4 6.5L8.6 10.5"/></svg>
+        </button>
+        <button class="term-btn" onclick="toggleTerminalSearch()" title="Search (Ctrl+F)">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.3-4.3"/></svg>
+        </button>
+        <button class="term-btn" onclick="exportSession()" title="Export">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+        </button>
+        <button class="term-btn danger" onclick="killCurrentSession()" title="End session">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M18 6L6 18M6 6l12 12"/></svg>
+          End
+        </button>
+      </div>
+    </div>
+    <div id="term-search-bar" class="term-search-bar" hidden>
+      <input id="term-search-input" type="text" placeholder="Search in terminal…">
+      <span id="term-search-count" class="term-search-count"></span>
+      <button onclick="termSearchPrev()" aria-label="Prev">↑</button>
+      <button onclick="termSearchNext()" aria-label="Next">↓</button>
+      <button onclick="closeTerminalSearch()" aria-label="Close">×</button>
+    </div>
+    <div id="terminal-container" class="terminal-container"></div>
+  </main>
+
+  <!-- ════════════════════════════════════════════════════
+       TIME RIVER — bottom ribbon
+       ════════════════════════════════════════════════════ -->
+  <div id="time-river" class="time-river" hidden>
+    <div class="river-header">
+      <span class="river-title">Time River · last 24h</span>
+      <span class="river-now"><span class="river-now-dot"></span>now</span>
+      <button class="river-close" onclick="toggleTimeRiver()" aria-label="Close">×</button>
+    </div>
+    <canvas id="time-river-canvas" class="river-canvas"></canvas>
+    <div id="time-river-scrubber" class="river-scrubber"></div>
+    <div id="time-river-tooltip" class="river-tooltip" hidden></div>
   </div>
 
-  <!-- Keyboard Shortcuts Overlay (#9) -->
-  <div id="shortcuts-overlay" class="modal-overlay" onclick="toggleShortcutsOverlay()">
-    <div class="modal-content shortcuts-content" onclick="event.stopPropagation()">
-      <h3>Keyboard Shortcuts</h3>
-      <div class="shortcut-grid">
-        <div class="shortcut-row"><kbd>/</kbd><span>Focus search</span></div>
-        <div class="shortcut-row"><kbd>Ctrl+K</kbd><span>Command palette</span></div>
-        <div class="shortcut-row"><kbd>Esc</kbd><span>Back to dashboard / close</span></div>
-        <div class="shortcut-row"><kbd>Ctrl+1-8</kbd><span>Switch session tabs</span></div>
-        <div class="shortcut-row"><kbd>?</kbd><span>This help</span></div>
+  <!-- ════════════════════════════════════════════════════
+       SESSION TABS — bottom
+       ════════════════════════════════════════════════════ -->
+  <div id="session-tabs" class="session-tabs"></div>
+
+  <!-- ════════════════════════════════════════════════════
+       AGENT DETAIL CARD — floating
+       ════════════════════════════════════════════════════ -->
+  <aside id="detail-card" class="detail-card" hidden>
+    <header class="detail-head">
+      <div class="detail-hex-wrap">
+        <svg viewBox="0 0 46 52" width="46" height="52">
+          <polygon points="23,2 44,13 44,39 23,50 2,39 2,13" fill="none" stroke="currentColor" stroke-width="1.4"/>
+        </svg>
+        <span id="detail-emoji" class="detail-emoji"></span>
+      </div>
+      <div class="detail-head-text">
+        <div id="detail-name" class="detail-name"></div>
+        <div id="detail-role" class="detail-role"></div>
+      </div>
+      <button class="detail-close" onclick="closeDetail()" aria-label="Close">×</button>
+    </header>
+    <div id="detail-mood" class="detail-mood"></div>
+    <p id="detail-vibe" class="detail-vibe"></p>
+    <div class="detail-grid">
+      <div class="detail-chip"><span class="dc-k">Category</span><span id="detail-category" class="dc-v"></span></div>
+      <div class="detail-chip"><span class="dc-k">Topics</span><span id="detail-topics-count" class="dc-v">—</span></div>
+      <div class="detail-chip"><span class="dc-k">7-day sparks</span><span id="detail-sessions7" class="dc-v">—</span></div>
+    </div>
+    <div class="detail-topics-row">
+      <span class="dc-label">Topics</span>
+      <div id="detail-topics" class="detail-topics"></div>
+    </div>
+    <div class="detail-actions">
+      <button class="btn btn-ghost" onclick="detailInspect()">Inspect</button>
+      <button class="btn btn-ghost" onclick="detailMemoryGarden()">Memory</button>
+      <button class="btn btn-ghost" onclick="detailQuickChat()">Quick ask</button>
+      <button class="btn btn-primary" onclick="detailLaunch()">Summon</button>
+    </div>
+  </aside>
+
+  <!-- ════════════════════════════════════════════════════
+       INCANTATION BAR — command palette replacement
+       ════════════════════════════════════════════════════ -->
+  <div id="incantation-overlay" class="incantation-overlay" onclick="if(event.target===this)closeIncantation()">
+    <div class="incantation-box">
+      <div class="incantation-top">
+        <span class="incantation-prompt">&#10022;</span>
+        <input id="incantation-input" class="incantation-input" type="text" placeholder="Speak an intention — e.g. &quot;tell atlas to research homelab costs&quot;" autocomplete="off" spellcheck="false">
+        <kbd>esc</kbd>
+      </div>
+      <div id="incantation-parse" class="incantation-parse"></div>
+      <div id="incantation-list" class="incantation-list"></div>
+      <div class="incantation-footer">
+        <span><kbd>↵</kbd> cast</span>
+        <span><kbd>↑↓</kbd> navigate</span>
+        <span><kbd>⇥</kbd> agent</span>
+        <span class="incantation-hint">Swarm: prefix with <code>@all</code> or <code>@swarm</code></span>
       </div>
     </div>
   </div>
 
-  <!-- Toast container -->
+  <!-- ════════════════════════════════════════════════════
+       SWARM DISPATCH — multi-agent broadcaster
+       ════════════════════════════════════════════════════ -->
+  <div id="swarm-overlay" class="overlay" onclick="if(event.target===this)closeSwarm()">
+    <div class="panel panel-wide">
+      <header class="panel-head">
+        <div class="panel-title-wrap">
+          <div class="panel-accent-bar"></div>
+          <div>
+            <h3 class="panel-title">Swarm Dispatch</h3>
+            <div class="panel-sub">Fan a single prompt to many agents — watch them race</div>
+          </div>
+        </div>
+        <button class="icon-x" onclick="closeSwarm()">×</button>
+      </header>
+      <div class="swarm-body">
+        <div class="swarm-target-row">
+          <span class="dc-label">Targets</span>
+          <div id="swarm-targets" class="swarm-targets"></div>
+          <button class="btn btn-ghost btn-sm" onclick="swarmToggleAll()">Select all</button>
+        </div>
+        <textarea id="swarm-prompt" class="swarm-prompt" rows="3" placeholder="The prompt all selected agents will receive in parallel…"></textarea>
+        <div class="swarm-actions">
+          <span id="swarm-count" class="swarm-count">0 targets · 0 chars</span>
+          <button class="btn btn-primary" onclick="swarmCast()">Cast to swarm</button>
+        </div>
+        <div id="swarm-track" class="swarm-track"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════════════════════════════════════════════════════
+       MEMORY GARDEN — spatial memory orbs
+       ════════════════════════════════════════════════════ -->
+  <div id="garden-overlay" class="overlay" onclick="if(event.target===this)closeMemoryGarden()">
+    <div class="panel panel-full">
+      <header class="panel-head">
+        <div class="panel-title-wrap">
+          <div class="panel-accent-bar"></div>
+          <div>
+            <h3 class="panel-title">Memory Garden <span id="garden-agent-name" class="panel-title-sub"></span></h3>
+            <div class="panel-sub">Recent memories bloom · older ones dim · drag to cluster</div>
+          </div>
+        </div>
+        <div class="garden-controls">
+          <select id="garden-agent-select" onchange="loadGarden(this.value)"></select>
+          <button class="icon-x" onclick="closeMemoryGarden()">×</button>
+        </div>
+      </header>
+      <div id="garden-canvas-wrap" class="garden-canvas-wrap">
+        <canvas id="garden-canvas" class="garden-canvas"></canvas>
+        <div id="garden-orb-details" class="garden-orb-details" hidden></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════════════════════════════════════════════════════
+       AGENT INSPECTOR — files / memory / topics
+       ════════════════════════════════════════════════════ -->
+  <div id="inspector-overlay" class="overlay" onclick="if(event.target===this)closeInspector()">
+    <div class="panel panel-full">
+      <header class="panel-head">
+        <div class="panel-title-wrap">
+          <div class="panel-accent-bar"></div>
+          <span id="inspector-emoji" class="panel-head-emoji"></span>
+          <div>
+            <h3 id="inspector-name" class="panel-title"></h3>
+            <div class="panel-sub">Workspace Inspector</div>
+          </div>
+        </div>
+        <button class="icon-x" onclick="closeInspector()">×</button>
+      </header>
+      <div class="inspector-tabs">
+        <button class="insp-tab active" data-section="files" onclick="inspectorShowSection('files')">Files</button>
+        <button class="insp-tab" data-section="memory" onclick="inspectorShowSection('memory')">Memory</button>
+        <button class="insp-tab" data-section="topics" onclick="inspectorShowSection('topics')">Topics</button>
+      </div>
+      <div class="inspector-body">
+        <aside class="insp-list" id="inspector-list"></aside>
+        <main class="insp-main">
+          <div class="insp-toolbar">
+            <span id="inspector-current"></span>
+            <div class="insp-toolbar-actions">
+              <button id="inspector-edit-btn" class="icon-btn" onclick="inspectorToggleEdit()" title="Edit" hidden>
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.1 2.1 0 0 1 3 3L12 15l-4 1 1-4z"/></svg>
+              </button>
+              <button id="inspector-save-btn" class="icon-btn" onclick="inspectorSave()" title="Save (Ctrl+S)" hidden>
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/></svg>
+              </button>
+            </div>
+          </div>
+          <pre id="inspector-view" class="insp-view"></pre>
+          <textarea id="inspector-editor" class="insp-editor" hidden></textarea>
+        </main>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════════════════════════════════════════════════════
+       SKILLS CATALOG
+       ════════════════════════════════════════════════════ -->
+  <div id="skills-overlay" class="overlay" onclick="if(event.target===this)closeSkills()">
+    <div class="panel panel-full">
+      <header class="panel-head">
+        <div class="panel-title-wrap">
+          <div class="panel-accent-bar"></div>
+          <div>
+            <h3 class="panel-title">Skills Catalog</h3>
+            <div class="panel-sub" id="skills-count">—</div>
+          </div>
+        </div>
+        <button class="icon-x" onclick="closeSkills()">×</button>
+      </header>
+      <div class="panel-search">
+        <input id="skills-search" type="text" placeholder="Search skills…">
+      </div>
+      <div class="inspector-body">
+        <aside class="insp-list" id="skills-list"></aside>
+        <main class="insp-main">
+          <div class="insp-toolbar">
+            <span id="skills-current">Select a skill</span>
+          </div>
+          <pre id="skills-view" class="insp-view"></pre>
+        </main>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════════════════════════════════════════════════════
+       TOPICS BROWSER
+       ════════════════════════════════════════════════════ -->
+  <div id="topics-overlay" class="overlay" onclick="if(event.target===this)closeTopics()">
+    <div class="panel">
+      <header class="panel-head">
+        <div class="panel-title-wrap">
+          <div class="panel-accent-bar"></div>
+          <div>
+            <h3 class="panel-title">Topics</h3>
+            <div class="panel-sub" id="topics-count">—</div>
+          </div>
+        </div>
+        <button class="icon-x" onclick="closeTopics()">×</button>
+      </header>
+      <div class="panel-search">
+        <input id="topics-search" type="text" placeholder="Search topics…">
+      </div>
+      <div id="topics-list" class="panel-scroll"></div>
+    </div>
+  </div>
+
+  <!-- ════════════════════════════════════════════════════
+       AGENT HEALTH
+       ════════════════════════════════════════════════════ -->
+  <div id="health-overlay" class="overlay" onclick="if(event.target===this)closeAgentHealth()">
+    <div class="panel">
+      <header class="panel-head">
+        <div class="panel-title-wrap">
+          <div class="panel-accent-bar"></div>
+          <div>
+            <h3 class="panel-title">Agent Health</h3>
+            <div class="panel-sub" id="health-summary">Scanning…</div>
+          </div>
+        </div>
+        <button class="icon-x" onclick="closeAgentHealth()">×</button>
+      </header>
+      <div id="health-list" class="panel-scroll"></div>
+    </div>
+  </div>
+
+  <!-- ════════════════════════════════════════════════════
+       ACTIVITY FEED
+       ════════════════════════════════════════════════════ -->
+  <aside id="activity-feed" class="activity-feed" hidden>
+    <div class="activity-head">
+      <span class="activity-title">Activity · live</span>
+      <button class="icon-x" onclick="toggleActivityFeed()" aria-label="Close">×</button>
+    </div>
+    <div id="activity-list" class="activity-list"></div>
+  </aside>
+
+  <!-- ════════════════════════════════════════════════════
+       SETTINGS
+       ════════════════════════════════════════════════════ -->
+  <div id="settings-overlay" class="overlay" onclick="if(event.target===this)closeSettings()">
+    <div class="panel">
+      <header class="panel-head">
+        <div class="panel-title-wrap">
+          <div class="panel-accent-bar"></div>
+          <div>
+            <h3 class="panel-title">Settings</h3>
+            <div class="panel-sub">Tune your hive</div>
+          </div>
+        </div>
+        <button class="icon-x" onclick="closeSettings()">×</button>
+      </header>
+      <div class="settings-body">
+        <section>
+          <div class="set-label">Theme</div>
+          <div class="theme-pick">
+            <button class="theme-btn active" data-theme="honey" onclick="applyTheme('honey')">Honey</button>
+            <button class="theme-btn" data-theme="abyss" onclick="applyTheme('abyss')">Abyss</button>
+            <button class="theme-btn" data-theme="ember" onclick="applyTheme('ember')">Ember</button>
+            <button class="theme-btn" data-theme="moss" onclick="applyTheme('moss')">Moss</button>
+          </div>
+        </section>
+        <section>
+          <div class="set-label">Aura intensity</div>
+          <input id="set-aura-intensity" type="range" min="0" max="100" value="60" class="range" oninput="setAuraIntensity(this.value)">
+        </section>
+        <section>
+          <div class="set-label">Motion</div>
+          <label class="checkrow"><input id="set-motion-calm" type="checkbox" onchange="setCalmMotion(this.checked)"> Calm motion (reduce animation)</label>
+        </section>
+        <section>
+          <div class="set-label">Ambient hum</div>
+          <label class="checkrow"><input id="set-ambient" type="checkbox" onchange="setAmbientHum(this.checked)"> Subtle ambient soundscape in Focus Chamber</label>
+        </section>
+        <section>
+          <div class="set-label">Notifications</div>
+          <label class="checkrow"><input id="set-notifications" type="checkbox" onchange="toggleNotifications(this.checked)"> Browser notifications when sessions end</label>
+        </section>
+        <section>
+          <div class="set-label">Outgoing webhooks</div>
+          <textarea id="set-webhooks" rows="3" placeholder="https://example.com/hook (one per line)"></textarea>
+          <button class="btn btn-ghost" onclick="saveWebhooks()">Save webhooks</button>
+        </section>
+        <section>
+          <div class="set-label">Webhook receiver secret</div>
+          <code id="set-webhook-secret" class="code-block">loading…</code>
+        </section>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════════════════════════════════════════════════════
+       QUICK CHAT
+       ════════════════════════════════════════════════════ -->
+  <div id="quickchat-overlay" class="overlay" onclick="if(event.target===this)closeQuickChat()">
+    <div class="panel">
+      <header class="panel-head">
+        <div class="panel-title-wrap">
+          <div class="panel-accent-bar"></div>
+          <div>
+            <h3 id="quickchat-title" class="panel-title"></h3>
+            <div class="panel-sub">Quick ask — one-shot, no session spun up</div>
+          </div>
+        </div>
+        <button class="icon-x" onclick="closeQuickChat()">×</button>
+      </header>
+      <div class="settings-body">
+        <textarea id="quickchat-input" class="prompt-textarea" rows="3" placeholder="What do you want to ask?"></textarea>
+        <div class="row-right">
+          <button class="btn btn-primary" onclick="sendQuickChat()">Ask</button>
+        </div>
+        <pre id="quickchat-response" class="insp-view" hidden></pre>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════════════════════════════════════════════════════
+       TOPIC MODAL — select topic before launching
+       ════════════════════════════════════════════════════ -->
+  <div id="topic-modal" class="overlay" onclick="if(event.target===this)closeTopicModal()">
+    <div class="panel">
+      <header class="panel-head">
+        <div class="panel-title-wrap">
+          <div class="panel-accent-bar"></div>
+          <div>
+            <h3 id="topic-modal-title" class="panel-title"></h3>
+            <div class="panel-sub">Pick a topic or summon without one</div>
+          </div>
+        </div>
+        <button class="icon-x" onclick="closeTopicModal()">×</button>
+      </header>
+      <div id="topic-list" class="topic-list"></div>
+      <div class="row-right">
+        <button class="btn btn-primary" onclick="launchAgent(selectedAgentId)">Summon general</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════════════════════════════════════════════════════
+       FOCUS CHAMBER overlay (flag only — view composes with terminal)
+       ════════════════════════════════════════════════════ -->
+  <div id="focus-hud" class="focus-hud" hidden>
+    <div class="focus-crown">
+      <span id="focus-emoji"></span>
+      <span id="focus-name"></span>
+      <span class="focus-dot"></span>
+      <span>focus chamber</span>
+    </div>
+    <button class="focus-leave" onclick="toggleFocusMode()" title="Leave (F)">leave · F</button>
+  </div>
+
+  <!-- ════════════════════════════════════════════════════
+       TOASTS
+       ════════════════════════════════════════════════════ -->
   <div id="toast-container" class="toast-container"></div>
 
+  <!-- ════════════════════════════════════════════════════
+       SHORTCUTS
+       ════════════════════════════════════════════════════ -->
+  <div id="shortcuts-overlay" class="overlay" onclick="toggleShortcuts()">
+    <div class="panel" onclick="event.stopPropagation()">
+      <header class="panel-head">
+        <div class="panel-title-wrap">
+          <div class="panel-accent-bar"></div>
+          <div>
+            <h3 class="panel-title">Keyboard</h3>
+            <div class="panel-sub">The whole hive in your fingertips</div>
+          </div>
+        </div>
+        <button class="icon-x" onclick="toggleShortcuts()">×</button>
+      </header>
+      <div class="shortcut-grid">
+        <div class="sr"><kbd>/</kbd><span>Focus hive search</span></div>
+        <div class="sr"><kbd>Ctrl</kbd><kbd>K</kbd><span>Incantation bar</span></div>
+        <div class="sr"><kbd>H</kbd><span>Hive view</span></div>
+        <div class="sr"><kbd>G</kbd><span>Grid view</span></div>
+        <div class="sr"><kbd>L</kbd><span>List view</span></div>
+        <div class="sr"><kbd>F</kbd><span>Focus chamber</span></div>
+        <div class="sr"><kbd>T</kbd><span>Toggle Time River</span></div>
+        <div class="sr"><kbd>S</kbd><span>Swarm dispatch</span></div>
+        <div class="sr"><kbd>M</kbd><span>Memory garden</span></div>
+        <div class="sr"><kbd>A</kbd><span>Activity feed</span></div>
+        <div class="sr"><kbd>Esc</kbd><span>Close / back</span></div>
+        <div class="sr"><kbd>Ctrl</kbd><kbd>1-8</kbd><span>Switch session tabs</span></div>
+        <div class="sr"><kbd>?</kbd><span>This help</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════════════════════════════════════════════════════
+       SCRIPTS
+       ════════════════════════════════════════════════════ -->
   <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-web-links@0.11.0/lib/addon-web-links.min.js"></script>

@@ -1,2328 +1,1406 @@
-// ══════════════════════════════════════════════════════════════
-//  AGENT COMMAND CENTER — Frontend Logic
-// ══════════════════════════════════════════════════════════════
+/* ═══════════════════════════════════════════════════════════════════
+ * THE HIVE — Dashboard Controller
+ * Bioluminescent Swarm OS · 2026-04-16
+ * ═══════════════════════════════════════════════════════════════════ */
 
-// ── State ──────────────────────────────────────────────────────
-let agents = [];
-let terminals = new Map();
-let currentSessionId = null;
-let selectedAgentId = null;
-let currentFilter = 'all';
-let pinnedAgents = JSON.parse(localStorage.getItem('pinnedAgents') || '[]');
-let currentSort = localStorage.getItem('agentSort') || 'name';
-let viewMode = localStorage.getItem('viewMode') || 'grid';
+'use strict';
 
-// ── Auth (Bearer token) ────────────────────────────────────────
-let authToken = localStorage.getItem('clawhiveToken') || '';
-let authRequired = false;
-
-// Wrap fetch to inject Authorization header when a token is set
-const _origFetch = window.fetch.bind(window);
-window.fetch = function (url, opts = {}) {
-  if (authToken) {
-    opts.headers = { ...(opts.headers || {}), Authorization: `Bearer ${authToken}` };
-  }
-  return _origFetch(url, opts);
+/* ─── Global state ─────────────────────────────────────────────── */
+const state = {
+  agents: [],
+  agentsById: {},
+  sessions: [],
+  activity: [],
+  bridges: [],                    // {from, to, id, color}
+  filter: 'all',
+  search: '',
+  view: 'hive',                   // hive | grid | list | terminal
+  activeAgent: null,
+  activeSession: null,            // current terminal session id
+  terminals: {},                  // sessionId -> {term, fit, search, ws, buffer}
+  pinned: new Set(),
+  selectedAgentId: null,
+  auraIntensity: parseInt(localStorage.getItem('auraIntensity') || '60', 10),
+  calmMotion: localStorage.getItem('calmMotion') === '1',
+  ambientHum: localStorage.getItem('ambientHum') === '1',
+  notifOk: false,
+  authRequired: false,
+  authToken: localStorage.getItem('hive_token') || '',
+  evtWs: null,
+  timeRiverOpen: false,
+  timeRiverEvents: [],
+  focusMode: false,
+  draggingFrom: null,             // bridge-drag source agent id
+  hiveLayout: {},                 // agentId -> {x, y}
+  pulseCount: 0,
+  gardenOrbs: [],
+  ttsEnabled: false,
+  voiceListening: false,
 };
+window.state = state;
+let selectedAgentId = null;
 
-async function checkAuth() {
-  try {
-    const res = await _origFetch('/api/auth');
-    const data = await res.json();
-    authRequired = !!data.authRequired;
-    if (authRequired && !authToken) {
-      promptForToken();
-    }
-  } catch {}
+/* ─── Utilities ────────────────────────────────────────────────── */
+const $  = (sel, el = document) => el.querySelector(sel);
+const $$ = (sel, el = document) => Array.from(el.querySelectorAll(sel));
+const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
+const now = () => Date.now();
+const relTime = (ts) => {
+  const s = Math.floor((Date.now() - ts) / 1000);
+  if (s < 60) return `${s}s`;
+  if (s < 3600) return `${Math.floor(s/60)}m`;
+  if (s < 86400) return `${Math.floor(s/3600)}h`;
+  return `${Math.floor(s/86400)}d`;
+};
+const hexToRgb = (h) => {
+  h = (h || '#ffb347').replace('#','');
+  if (h.length === 3) h = h.split('').map(c=>c+c).join('');
+  return [parseInt(h.substr(0,2),16), parseInt(h.substr(2,2),16), parseInt(h.substr(4,2),16)];
+};
+const rgba = (h, a) => { const [r,g,b] = hexToRgb(h); return `rgba(${r},${g},${b},${a})`; };
+
+function toast(msg, kind = 'info') {
+  const el = document.createElement('div');
+  el.className = `toast toast-${kind}`;
+  el.textContent = msg;
+  $('#toast-container').appendChild(el);
+  requestAnimationFrame(() => el.classList.add('in'));
+  setTimeout(() => { el.classList.remove('in'); setTimeout(() => el.remove(), 400); }, 3200);
+}
+window.toast = toast;
+
+/* ─── Fetch wrapper (auth aware) ───────────────────────────────── */
+async function api(path, opts = {}) {
+  opts.headers = opts.headers || {};
+  if (state.authToken) opts.headers['Authorization'] = `Bearer ${state.authToken}`;
+  if (opts.body && typeof opts.body === 'object' && !(opts.body instanceof FormData) && !(opts.body instanceof ArrayBuffer)) {
+    opts.headers['Content-Type'] = 'application/json';
+    opts.body = JSON.stringify(opts.body);
+  }
+  const r = await fetch(path, opts);
+  if (r.status === 401) {
+    promptForToken();
+    throw new Error('Auth required');
+  }
+  const ct = r.headers.get('content-type') || '';
+  if (ct.includes('application/json')) {
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
+    return data;
+  }
+  const text = await r.text();
+  if (!r.ok) throw new Error(text || `HTTP ${r.status}`);
+  return text;
 }
 
 function promptForToken() {
-  const t = prompt('This ClawHive instance requires a token. Enter Bearer token:');
+  const t = prompt('This hive needs a bearer token (CLAWHIVE_TOKEN):');
   if (t) {
-    authToken = t.trim();
-    localStorage.setItem('clawhiveToken', authToken);
-    location.reload();
+    state.authToken = t;
+    localStorage.setItem('hive_token', t);
+    toast('Token saved — retry your action', 'ok');
   }
 }
 
-function clearToken() {
-  authToken = '';
-  localStorage.removeItem('clawhiveToken');
-  location.reload();
-}
+/* ═══════════════════════════════════════════════════════════════════
+ * INITIALIZATION
+ * ═══════════════════════════════════════════════════════════════════ */
+document.addEventListener('DOMContentLoaded', init);
 
-// Run auth check on init
-checkAuth();
+async function init() {
+  applyInitialTheme();
+  applyCalmMotion(state.calmMotion);
+  setAuraIntensity(state.auraIntensity, true);
+  restorePinned();
 
-// ── XSS Protection (#11) ────────────────────────────────────────
-function esc(str) {
-  const d = document.createElement('div');
-  d.textContent = str;
-  return d.innerHTML;
-}
-
-function escAttr(str) {
-  return str.replace(/[&"'<>]/g, c => ({ '&': '&amp;', '"': '&quot;', "'": '&#39;', '<': '&lt;', '>': '&gt;' }[c]));
-}
-
-// ── Agent categories and accent colors ────────────────────────
-// Categories are read dynamically from each agent's IDENTITY.md (Category: field).
-// This fallback map is only used when an agent has no Category defined.
-const agentCategories = {
-  coding:     'engineering',
-  researcher: 'research',
-  designer:   'creative',
-  auditor:    'operations',
-  finance:    'operations',
-  social:     'social',
-  life:       'personal',
-  prompter:   'personal',
-};
-
-const categoryColors = {
-  engineering: '#818cf8',
-  operations:  '#fb923c',
-  social:      '#f472b6',
-  research:    '#22d3ee',
-  personal:    '#34d399',
-};
-
-const categoryOrder = ['engineering', 'operations', 'social', 'research', 'personal'];
-
-const categoryLabels = {
-  engineering: 'Engineering & Development',
-  operations:  'Operations & Business',
-  social:      'Social & Marketing',
-  research:    'Research & Intelligence',
-  personal:    'Personal & System',
-};
-
-// Accent colors are read dynamically from each agent's IDENTITY.md (Color: field).
-// This fallback map is only used when an agent has no Color defined.
-const agentAccentColors = {
-  coding: '#818cf8', researcher: '#059669', designer: '#a855f7',
-  auditor: '#22c55e', finance: '#eab308', social: '#ec4899',
-  life: '#34d399', prompter: '#f59e0b',
-};
-
-// ── Category helper — prefer server-provided, fallback to hardcoded (#16) ──
-function getCategory(agent) {
-  if (agent.category) return agent.category;
-  return agentCategories[agent.id] || 'personal';
-}
-
-// ── Init ───────────────────────────────────────────────────────
-document.addEventListener('DOMContentLoaded', () => {
-  loadAgents();
-  recoverSessions();
-  setupKeyboard();
-  setupFilterChips();
-  setupCursorGlow();
-  setupGridClicks();
-  loadRecentSessions();
-  document.getElementById('agent-search').addEventListener('input', filterAgents);
-});
-
-// ── Delegated click handler for agent grid (#11 XSS fix) ────────
-function setupGridClicks() {
-  const grid = document.getElementById('agent-grid');
-
-  grid.addEventListener('click', (e) => {
-    // Pin button (#2)
-    const pinBtn = e.target.closest('.pin-btn[data-pin]');
-    if (pinBtn) {
-      e.stopPropagation();
-      togglePin(pinBtn.dataset.pin);
-      return;
-    }
-    // Quick-launch topic chip (#4)
-    const chip = e.target.closest('.topic-chip[data-topic]');
-    if (chip) {
-      e.stopPropagation();
-      launchAgent(chip.dataset.agent, chip.dataset.topic);
-      return;
-    }
-    // Agent card click
-    const card = e.target.closest('.agent-card[data-agent]');
-    if (card) onAgentClick(card.dataset.agent);
-  });
-
-  // Long-press / double-click opens detail panel (#3)
-  grid.addEventListener('dblclick', (e) => {
-    const card = e.target.closest('.agent-card[data-agent]');
-    if (card) {
-      e.preventDefault();
-      showDetailPanel(card.dataset.agent);
-    }
-  });
-}
-
-// ── Cursor glow on agent cards ──────────────────────────────────
-function setupCursorGlow() {
-  document.getElementById('agent-grid').addEventListener('mousemove', (e) => {
-    const card = e.target.closest('.agent-card');
-    if (!card) return;
-    const rect = card.getBoundingClientRect();
-    card.style.setProperty('--mx', `${e.clientX - rect.left}px`);
-    card.style.setProperty('--my', `${e.clientY - rect.top}px`);
-  });
-}
-
-// ── Keyboard shortcuts ─────────────────────────────────────────
-function setupKeyboard() {
-  document.addEventListener('keydown', (e) => {
-    // '/' focuses search
-    if (e.key === '/' && !e.ctrlKey && !e.metaKey && document.activeElement.tagName !== 'INPUT') {
-      e.preventDefault();
-      document.getElementById('agent-search').focus();
-    }
-    // Escape: back to dashboard or blur search
-    if (e.key === 'Escape') {
-      if (document.activeElement.tagName === 'INPUT') {
-        document.activeElement.blur();
-      } else if (currentSessionId) {
-        showDashboard();
-      }
-    }
-    // Ctrl+1-8: switch session tabs
-    if (e.ctrlKey && e.key >= '1' && e.key <= '8') {
-      const idx = parseInt(e.key) - 1;
-      const sessionIds = [...terminals.keys()];
-      if (idx < sessionIds.length) {
-        e.preventDefault();
-        switchToSession(sessionIds[idx]);
-      }
-    }
-    // '?' opens keyboard shortcuts overlay (#9)
-    if (e.key === '?' && document.activeElement.tagName !== 'INPUT') {
-      e.preventDefault();
-      toggleShortcutsOverlay();
-    }
-  });
-}
-
-// ── Filter chips ───────────────────────────────────────────────
-function setupFilterChips() {
-  document.querySelectorAll('.chip').forEach(chip => {
-    chip.addEventListener('click', () => {
-      document.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
-      chip.classList.add('active');
-      currentFilter = chip.dataset.filter;
-      renderAgentGrid(agents);
-    });
-  });
-}
-
-// ── Recover sessions on page load ──────────────────────────────
-async function recoverSessions() {
   try {
-    const res = await fetch('/api/sessions');
-    const serverSessions = await res.json();
-    for (const s of serverSessions) {
-      if (s.alive && !terminals.has(s.id)) {
-        await new Promise(r => setTimeout(r, 300));
-        createTerminal(s.id, s.agentId, s.topic);
-      }
-    }
-  } catch {}
+    const info = await api('/api/auth');
+    state.authRequired = !!info.authRequired;
+  } catch { /* ignore */ }
+
+  attachGlobalHandlers();
+  connectEventsWS();
+
+  await Promise.all([ loadAgents(), loadSessions(), loadActivity() ]);
+
+  renderHive();
+  renderGrid();
+  renderList();
+  renderSessionTabs();
+  renderActivity();
+  updatePulseCore();
+
+  setInterval(updatePulseCore, 4500);
+  setInterval(async () => { await loadSessions(); renderSessionTabs(); }, 9000);
+
+  window.hiveApi = { api, toast, launchAgent, openDetail, getAgents: () => state.agents, openInspector, openTopics, openSkills, openSwarm, openMemoryGarden };
+
+  hideLoading();
 }
 
-// ── Load Agents ────────────────────────────────────────────────
+function hideLoading() {
+  const el = $('#hive-loading');
+  if (el) el.style.display = 'none';
+}
+
+/* ─── Themes & motion ─────────────────────────────────────────── */
+function applyInitialTheme() { applyTheme(localStorage.getItem('hiveTheme') || 'honey'); }
+function applyTheme(theme) {
+  document.documentElement.setAttribute('data-theme', theme);
+  localStorage.setItem('hiveTheme', theme);
+  $$('.theme-btn').forEach(b => b.classList.toggle('active', b.dataset.theme === theme));
+}
+window.applyTheme = applyTheme;
+
+function setAuraIntensity(v, silent) {
+  state.auraIntensity = parseInt(v, 10) || 0;
+  document.documentElement.style.setProperty('--aura-intensity', (state.auraIntensity/100).toFixed(2));
+  localStorage.setItem('auraIntensity', String(state.auraIntensity));
+  const slider = $('#set-aura-intensity');
+  if (slider && !silent) slider.value = state.auraIntensity;
+}
+window.setAuraIntensity = setAuraIntensity;
+
+function setCalmMotion(on) { applyCalmMotion(on); localStorage.setItem('calmMotion', on ? '1':'0'); }
+function applyCalmMotion(on) {
+  state.calmMotion = on;
+  document.documentElement.classList.toggle('calm', !!on);
+  const cb = $('#set-motion-calm'); if (cb) cb.checked = !!on;
+}
+window.setCalmMotion = setCalmMotion;
+function setAmbientHum(on) { state.ambientHum = on; localStorage.setItem('ambientHum', on ? '1':'0'); }
+window.setAmbientHum = setAmbientHum;
+
+/* ═══════════════════════════════════════════════════════════════════
+ * DATA LOADING
+ * ═══════════════════════════════════════════════════════════════════ */
 async function loadAgents() {
   try {
-    const res = await fetch('/api/agents');
-    agents = await res.json();
-    // Hide skeleton, show grid
-    document.getElementById('skeleton-grid').style.display = 'none';
-    const grid = document.getElementById('agent-grid');
-    grid.style.display = '';
-    buildDynamicChips();
-    renderAgentGrid(agents);
-    updateSessionCount();
-    updateStatsBar();
-    loadHealthForCards();
-  } catch (err) {
-    console.error('Failed to load agents:', err);
-  }
+    const list = await api('/api/agents');
+    state.agents = list;
+    state.agentsById = {};
+    list.forEach(a => state.agentsById[a.id] = a);
+    const fc = $('#fleet-count'); if (fc) fc.textContent = list.length;
+    const pa = $('#pcs-agents'); if (pa) pa.textContent = list.length;
+  } catch (e) { console.error('loadAgents', e); toast('Failed to load agents', 'err'); }
 }
 
-function filterAgents(e) {
-  const q = e.target.value.toLowerCase();
-  const filtered = agents.filter(a =>
-    a.name.toLowerCase().includes(q) ||
-    a.id.toLowerCase().includes(q) ||
-    a.role.toLowerCase().includes(q) ||
-    a.vibe.toLowerCase().includes(q)
-  );
-  renderAgentGrid(filtered);
+async function loadSessions() {
+  try {
+    const list = await api('/api/sessions');
+    state.sessions = list;
+    const active = list.filter(s => s.alive).length;
+    state.pulseCount = active;
+    const pc = $('#pulse-count'); if (pc) pc.textContent = active;
+    const pca = $('#pcs-active'); if (pca) pca.textContent = active;
+  } catch { /* ignore */ }
 }
 
-// ── Render Agent Grid with Categories ──────────────────────────
-function renderAgentGrid(agentList) {
-  const grid = document.getElementById('agent-grid');
+async function loadActivity() {
+  try {
+    const list = await api('/api/activity?limit=80');
+    state.activity = (Array.isArray(list) ? list.slice() : []).reverse();
+    const pe = $('#pcs-events'); if (pe) pe.textContent = state.activity.length;
+  } catch { /* ignore */ }
+}
 
-  // Apply category filter
-  let filtered = agentList;
-  if (currentFilter === 'active') {
-    filtered = agentList.filter(a => a.hasActiveSession);
-  } else if (currentFilter === 'pinned') {
-    filtered = agentList.filter(a => isPinned(a.id));
-  } else if (currentFilter !== 'all') {
-    filtered = agentList.filter(a => getCategory(a) === currentFilter);
+/* ═══════════════════════════════════════════════════════════════════
+ * EVENTS WEBSOCKET
+ * ═══════════════════════════════════════════════════════════════════ */
+function connectEventsWS() {
+  try {
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const ws = new WebSocket(`${proto}//${location.host}/ws/events`);
+    state.evtWs = ws;
+    ws.addEventListener('message', (e) => { try { handleEvent(JSON.parse(e.data)); } catch {} });
+    ws.addEventListener('close', () => setTimeout(connectEventsWS, 3500));
+    ws.addEventListener('error', () => { try { ws.close(); } catch {} });
+  } catch { setTimeout(connectEventsWS, 3500); }
+}
+
+function handleEvent(msg) {
+  const t = msg.type;
+  state.activity.push({ ...msg, timestamp: msg.timestamp || now() });
+  if (state.activity.length > 200) state.activity.splice(0, state.activity.length - 200);
+  renderActivityRow(msg, true);
+
+  if (t === 'session_started' || t === 'session_ended') {
+    loadSessions().then(() => { renderSessionTabs(); renderHive(); renderList(); renderGrid(); });
+    if (msg.agentId) flashCell(msg.agentId, t === 'session_started' ? 'busy' : 'idle');
+  } else if (t === 'activity' && msg.agentId) {
+    flashCell(msg.agentId, 'active');
+  } else if (t === 'terminal_output' && msg.sessionId) {
+    const rec = state.terminals[msg.sessionId];
+    if (rec && rec.term) { rec.term.write(msg.data); if (state.ttsEnabled && state.activeSession === msg.sessionId) queueTTS(msg.data); }
+  } else if (t === 'terminal_exit' && msg.sessionId) {
+    const rec = state.terminals[msg.sessionId];
+    if (rec && rec.term) rec.term.writeln('\r\n\x1b[90m[session ended]\x1b[0m');
   }
+  if (state.timeRiverOpen) drawTimeRiver();
+}
 
-  // Sort pinned agents first, then by chosen sort (#19)
-  filtered = [...filtered].sort((a, b) => {
-    const ap = isPinned(a.id) ? 0 : 1;
-    const bp = isPinned(b.id) ? 0 : 1;
-    if (ap !== bp) return ap - bp;
-    if (currentSort === 'topics') return b.topics.length - a.topics.length;
-    if (currentSort === 'category') return getCategory(a).localeCompare(getCategory(b));
-    return a.name.localeCompare(b.name);
+/* ═══════════════════════════════════════════════════════════════════
+ * 🕸 #1 — HIVE CONSTELLATION
+ * ═══════════════════════════════════════════════════════════════════ */
+function computeHiveLayout() {
+  const svg = $('#hive-map'); if (!svg) return;
+  const rect = svg.getBoundingClientRect();
+  const W = rect.width || 1200, H = rect.height || 700;
+  const agents = filteredAgents();
+  const ringGap = 138;
+  const centers = [];
+  const ringCounts = [6, 12, 18, 24];
+  let ringIdx = 0, placed = 0;
+  while (placed < agents.length && ringIdx < ringCounts.length) {
+    const count = ringCounts[ringIdx];
+    const radius = ringGap * (ringIdx + 1);
+    const offset = (ringIdx % 2) * (Math.PI / count);
+    for (let i = 0; i < count && placed < agents.length; i++) {
+      const a = (Math.PI * 2 * i / count) + offset - Math.PI/2;
+      centers.push({ x: Math.cos(a) * radius, y: Math.sin(a) * radius });
+      placed++;
+    }
+    ringIdx++;
+  }
+  while (placed < agents.length) {
+    const i = placed;
+    const angle = (Math.PI * 2 * i / 30) - Math.PI/2;
+    const radius = ringGap * 4.4;
+    centers.push({ x: Math.cos(angle) * radius, y: Math.sin(angle) * radius });
+    placed++;
+  }
+  state.hiveLayout = {};
+  agents.forEach((a, i) => {
+    const c = centers[i] || { x: 0, y: 0 };
+    state.hiveLayout[a.id] = { x: c.x + W/2, y: c.y + H/2 };
   });
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  svg.setAttribute('width', W); svg.setAttribute('height', H);
+}
 
-  // Group by category
-  const groups = {};
-  for (const cat of categoryOrder) groups[cat] = [];
-  for (const agent of filtered) {
-    const cat = getCategory(agent);
-    if (!groups[cat]) groups[cat] = [];
-    groups[cat].push(agent);
+function renderHive() {
+  computeHiveLayout();
+  const cellsG = $('#hive-cells'); const labelsG = $('#hive-labels');
+  if (!cellsG) return;
+  cellsG.innerHTML = ''; labelsG.innerHTML = '';
+  const agents = filteredAgents();
+  agents.forEach(a => {
+    const pos = state.hiveLayout[a.id]; if (!pos) return;
+    const color = a.color || '#ffb347';
+    const mood = moodOf(a);
+    const r = 40;
+    const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    g.setAttribute('class', `hive-cell mood-${mood}`);
+    g.setAttribute('data-agent', a.id);
+    g.style.setProperty('--cell-color', color);
+
+    const glow = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    glow.setAttribute('class', 'cell-glow');
+    glow.setAttribute('d', hexPath(pos.x, pos.y, r + 6));
+    glow.setAttribute('fill', rgba(color, 0.10));
+    glow.setAttribute('stroke', rgba(color, 0.25));
+    g.appendChild(glow);
+
+    const body = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    body.setAttribute('class', 'cell-body');
+    body.setAttribute('d', hexPath(pos.x, pos.y, r));
+    body.setAttribute('fill', a.hasActiveSession ? rgba(color, 0.28) : 'url(#cellIdle)');
+    body.setAttribute('stroke', color);
+    body.setAttribute('stroke-width', a.hasActiveSession ? '1.8' : '1.2');
+    g.appendChild(body);
+
+    if (a.hasActiveSession) {
+      const pulse = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+      pulse.setAttribute('cx', pos.x); pulse.setAttribute('cy', pos.y);
+      pulse.setAttribute('r', r - 2);
+      pulse.setAttribute('fill', 'none');
+      pulse.setAttribute('stroke', color);
+      pulse.setAttribute('stroke-width', '1');
+      pulse.setAttribute('class', 'cell-pulse');
+      g.appendChild(pulse);
+    }
+
+    const fo = document.createElementNS('http://www.w3.org/2000/svg', 'foreignObject');
+    fo.setAttribute('x', pos.x - r/2); fo.setAttribute('y', pos.y - r/2);
+    fo.setAttribute('width', r); fo.setAttribute('height', r);
+    fo.innerHTML = `<div xmlns="http://www.w3.org/1999/xhtml" class="cell-emoji">${esc(a.emoji || '✦')}</div>`;
+    g.appendChild(fo);
+
+    g.addEventListener('click', (e) => { e.stopPropagation(); openDetail(a.id); });
+    g.addEventListener('dblclick', (e) => { e.stopPropagation(); requestLaunch(a.id); });
+    g.addEventListener('mouseenter', () => { setAura(color); highlightCell(a.id, true); });
+    g.addEventListener('mouseleave', () => { setAura(null); highlightCell(a.id, false); });
+    g.addEventListener('mousedown', (e) => {
+      if (!e.shiftKey) return;
+      e.preventDefault(); state.draggingFrom = a.id; startBridgeDrag(pos, color);
+    });
+    cellsG.appendChild(g);
+
+    const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    label.setAttribute('x', pos.x); label.setAttribute('y', pos.y + r + 14);
+    label.setAttribute('text-anchor', 'middle');
+    label.setAttribute('class', 'cell-label');
+    label.setAttribute('fill', rgba(color, 0.82));
+    label.textContent = a.name || a.id;
+    labelsG.appendChild(label);
+  });
+  renderBridges();
+}
+
+function hexPath(cx, cy, r) {
+  const pts = [];
+  for (let i = 0; i < 6; i++) {
+    const a = (Math.PI/3) * i - Math.PI/2;
+    pts.push(`${(cx + r*Math.cos(a)).toFixed(2)},${(cy + r*Math.sin(a)).toFixed(2)}`);
   }
+  return `M${pts.join('L')}Z`;
+}
 
-  let html = '';
-  let totalRendered = 0;
-  for (const cat of categoryOrder) {
-    const group = groups[cat];
-    if (!group || group.length === 0) continue;
+function filteredAgents() {
+  const q = (state.search || '').toLowerCase();
+  return state.agents.filter(a => {
+    if (state.filter === 'active' && !a.hasActiveSession) return false;
+    if (state.filter !== 'all' && state.filter !== 'active') {
+      const cat = String(a.category || '').toLowerCase();
+      if (!cat.includes(state.filter)) return false;
+    }
+    if (q) {
+      const hay = `${a.name} ${a.id} ${a.role} ${a.vibe} ${a.category}`.toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  });
+}
 
-    const catColor = categoryColors[cat] || '#818cf8';
+function highlightCell(id, on) {
+  const g = document.querySelector(`[data-agent="${CSS.escape(id)}"]`);
+  if (g) g.classList.toggle('hover', !!on);
+}
+function flashCell(id, mood) {
+  const g = document.querySelector(`[data-agent="${CSS.escape(id)}"]`);
+  if (!g) return;
+  g.classList.remove('mood-idle','mood-active','mood-busy','mood-stuck','mood-offline','flash');
+  g.classList.add(`mood-${mood}`); g.classList.add('flash');
+  setTimeout(() => g.classList.remove('flash'), 900);
+}
 
-    // Category header
-    html += `
-      <div class="category-header">
-        <span class="category-label" style="color:${escAttr(catColor)}">${esc(categoryLabels[cat] || cat)}</span>
-        <div class="category-line" style="background:linear-gradient(to right, ${escAttr(catColor)}30, transparent)"></div>
-      </div>
-    `;
+/* ═══════════════════════════════════════════════════════════════════
+ * 🎨 #2 — AGENT AURA
+ * ═══════════════════════════════════════════════════════════════════ */
+function setAura(color) {
+  const sky = $('#sky-aura'); if (!sky) return;
+  if (!color) { sky.style.background = ''; document.documentElement.style.setProperty('--aura-color', 'var(--honey)'); return; }
+  document.documentElement.style.setProperty('--aura-color', color);
+  sky.style.background = `radial-gradient(60% 60% at 50% 45%, ${rgba(color, 0.35)} 0%, ${rgba(color, 0.08)} 40%, transparent 70%)`;
+}
 
-    // Agent cards
-    for (const agent of group) {
-      const accent = agent.color || agentAccentColors[agent.id] || catColor;
-      const topicChips = agent.topics.slice(0, 3).map(t =>
-        `<span class="topic-chip" data-topic="${escAttr(t)}" data-agent="${escAttr(agent.id)}">${esc(t)}</span>`
-      ).join('');
-      const moreTopics = agent.topics.length > 3
-        ? `<span class="topic-chip">+${agent.topics.length - 3}</span>` : '';
+/* ═══════════════════════════════════════════════════════════════════
+ * 💓 #6 — MOOD RING
+ * ═══════════════════════════════════════════════════════════════════ */
+function moodOf(a) {
+  if (a.hasActiveSession) {
+    const s = state.sessions.find(x => x.agentId === a.id && x.alive);
+    if (s) {
+      const idle = now() - (s.lastActivity || s.startedAt || now());
+      if (idle > 5 * 60 * 1000) return 'stuck';
+      return 'busy';
+    }
+  }
+  const recent = state.activity.find(ev => ev.agentId === a.id && (now() - (ev.timestamp || 0)) < 30_000);
+  if (recent) return 'active';
+  return 'idle';
+}
 
-      const pinned = isPinned(agent.id);
-      html += `
-        <div class="agent-card ${agent.hasActiveSession ? 'has-session' : ''} ${pinned ? 'is-pinned' : ''}"
-             style="--card-accent:${escAttr(accent)}; --card-glow:${escAttr(accent)}30"
-             data-agent="${escAttr(agent.id)}">
-          <div class="card-top">
-            <span class="agent-emoji">${esc(agent.emoji)}</span>
-            <div class="status-indicator ${agent.hasActiveSession ? 'active' : ''}"></div>
-          </div>
-          <button class="pin-btn ${pinned ? 'pinned' : ''}" data-pin="${escAttr(agent.id)}" title="${pinned ? 'Unpin' : 'Pin to top'}"><svg width="14" height="14" viewBox="0 0 24 24" fill="${pinned ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg></button>
-          <div class="card-body">
-            <div class="agent-name">${esc(agent.name)}</div>
-            <div class="agent-role">${esc(agent.role)}</div>
-            ${agent.vibe ? `<div class="agent-vibe">${esc(agent.vibe)}</div>` : ''}
-            ${agent.topics.length > 0 ? `<div class="agent-topics">${topicChips}${moreTopics}</div>` : ''}
-          </div>
+/* ═══════════════════════════════════════════════════════════════════
+ * 🔗 #7 — CONSTELLATION BRIDGES
+ * ═══════════════════════════════════════════════════════════════════ */
+function startBridgeDrag(from, color) {
+  const svg = $('#hive-map');
+  const bridgesG = $('#hive-bridges');
+  const tmp = document.createElementNS('http://www.w3.org/2000/svg','line');
+  tmp.setAttribute('x1', from.x); tmp.setAttribute('y1', from.y);
+  tmp.setAttribute('x2', from.x); tmp.setAttribute('y2', from.y);
+  tmp.setAttribute('stroke', color); tmp.setAttribute('stroke-width','2');
+  tmp.setAttribute('stroke-dasharray','6,4'); tmp.setAttribute('opacity','.85');
+  bridgesG.appendChild(tmp);
+  function move(e) {
+    const pt = svg.createSVGPoint(); pt.x = e.clientX; pt.y = e.clientY;
+    const loc = pt.matrixTransform(svg.getScreenCTM().inverse());
+    tmp.setAttribute('x2', loc.x); tmp.setAttribute('y2', loc.y);
+  }
+  function up(e) {
+    document.removeEventListener('mousemove', move);
+    document.removeEventListener('mouseup', up);
+    tmp.remove();
+    const target = document.elementFromPoint(e.clientX, e.clientY);
+    const cell = target && target.closest('[data-agent]');
+    if (cell && state.draggingFrom) {
+      const to = cell.getAttribute('data-agent');
+      if (to && to !== state.draggingFrom) forgeBridge(state.draggingFrom, to);
+    }
+    state.draggingFrom = null;
+  }
+  document.addEventListener('mousemove', move);
+  document.addEventListener('mouseup', up);
+}
+
+function forgeBridge(fromId, toId) {
+  const exists = state.bridges.find(b => (b.from===fromId && b.to===toId) || (b.from===toId && b.to===fromId));
+  if (exists) { dissolveBridge(exists.id); toast(`Bridge dissolved: ${fromId} ↔ ${toId}`); return; }
+  const id = `b_${Date.now()}`;
+  const color = state.agentsById[fromId]?.color || '#ffb347';
+  state.bridges.push({ id, from: fromId, to: toId, color });
+  renderBridges();
+  toast(`Bridge forged: ${fromId} ↔ ${toId}`, 'ok');
+}
+
+function dissolveBridge(id) { state.bridges = state.bridges.filter(b => b.id !== id); renderBridges(); }
+
+function renderBridges() {
+  const g = $('#hive-bridges'); if (!g) return;
+  g.innerHTML = '';
+  state.bridges.forEach(b => {
+    const a = state.hiveLayout[b.from]; const c = state.hiveLayout[b.to];
+    if (!a || !c) return;
+    const mid = { x: (a.x+c.x)/2, y: (a.y+c.y)/2 - 40 };
+    const path = document.createElementNS('http://www.w3.org/2000/svg','path');
+    path.setAttribute('d', `M${a.x},${a.y} Q${mid.x},${mid.y} ${c.x},${c.y}`);
+    path.setAttribute('fill','none'); path.setAttribute('stroke', b.color);
+    path.setAttribute('stroke-width','1.6'); path.setAttribute('stroke-dasharray','4,5');
+    path.setAttribute('class','hive-bridge'); path.setAttribute('opacity','.75');
+    path.addEventListener('click', (e) => { e.stopPropagation(); dissolveBridge(b.id); });
+    g.appendChild(path);
+  });
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+ * GRID & LIST VIEWS
+ * ═══════════════════════════════════════════════════════════════════ */
+let gridSort = 'name';
+function changeSort(v) { gridSort = v; renderGrid(); }
+window.changeSort = changeSort;
+
+function renderGrid() {
+  const wrap = $('#grid-container'); if (!wrap) return;
+  let list = filteredAgents().slice();
+  if (gridSort === 'name') list.sort((a,b) => a.name.localeCompare(b.name));
+  else if (gridSort === 'category') list.sort((a,b) => (a.category||'').localeCompare(b.category||''));
+  else if (gridSort === 'activity') list.sort((a,b) => (b.hasActiveSession?1:0) - (a.hasActiveSession?1:0));
+  wrap.innerHTML = list.map(a => `
+    <article class="agent-card mood-${moodOf(a)}" style="--cell-color:${esc(a.color || '#ffb347')}" data-agent="${esc(a.id)}" onclick="openDetail('${esc(a.id)}')" ondblclick="requestLaunch('${esc(a.id)}')">
+      <div class="card-aura"></div>
+      <header class="card-head">
+        <div class="card-hex"><svg viewBox="0 0 40 46" width="36" height="42"><polygon points="20,2 38,11 38,35 20,44 2,35 2,11" fill="none" stroke="currentColor" stroke-width="1.5"/></svg><span class="card-emoji">${esc(a.emoji || '✦')}</span></div>
+        <div>
+          <div class="card-name">${esc(a.name || a.id)}</div>
+          <div class="card-cat">${esc(a.category || '')}</div>
         </div>
-      `;
-      totalRendered++;
-    }
-  }
-
-  // Empty state (#5)
-  if (totalRendered === 0) {
-    if (agentList.length === 0) {
-      html = `<div class="empty-state">
-        <div class="empty-icon">🔍</div>
-        <div class="empty-title">No agents found</div>
-        <div class="empty-text">Check that agent workspaces exist at ~/clawd-*/IDENTITY.md</div>
-      </div>`;
-    } else {
-      html = `<div class="empty-state">
-        <div class="empty-icon">🫥</div>
-        <div class="empty-title">No matching agents</div>
-        <div class="empty-text">Try a different filter or search term</div>
-      </div>`;
-    }
-  }
-
-  grid.innerHTML = html;
+        ${a.hasActiveSession ? '<span class="card-live"></span>' : ''}
+      </header>
+      <p class="card-role">${esc(a.role || '')}</p>
+      <footer class="card-foot">
+        <span class="card-topics">${a.topics?.length || 0} topics</span>
+        <button class="btn btn-primary btn-xs" onclick="event.stopPropagation();requestLaunch('${esc(a.id)}')">Summon</button>
+      </footer>
+    </article>
+  `).join('');
 }
 
-// ── Agent Click Handler ────────────────────────────────────────
-function onAgentClick(agentId) {
-  const agent = agents.find(a => a.id === agentId);
-  if (!agent) return;
-  if (agent.topics.length > 0) {
-    showTopicModal(agent);
-  } else {
-    launchAgent(agentId);
-  }
+function renderList() {
+  const body = $('#list-body'); if (!body) return;
+  body.innerHTML = filteredAgents().map(a => `
+    <tr data-agent="${esc(a.id)}" style="--cell-color:${esc(a.color || '#ffb347')}">
+      <td class="lt-emoji">${esc(a.emoji || '✦')}</td>
+      <td class="lt-name" onclick="openDetail('${esc(a.id)}')">${esc(a.name || a.id)}</td>
+      <td class="lt-role">${esc(a.role || '')}</td>
+      <td class="lt-cat">${esc(a.category || '')}</td>
+      <td>${a.topics?.length || 0}</td>
+      <td>${a.hasActiveSession ? '<span class="live-dot"></span> live' : '<span class="dim-dot"></span> idle'}</td>
+      <td class="lt-actions">
+        <button class="btn btn-ghost btn-xs" onclick="openDetail('${esc(a.id)}')">Info</button>
+        <button class="btn btn-primary btn-xs" onclick="requestLaunch('${esc(a.id)}')">Summon</button>
+      </td>
+    </tr>
+  `).join('');
 }
 
-// ── Topic Modal ────────────────────────────────────────────────
-function showTopicModal(agent) {
-  selectedAgentId = agent.id;
-  document.getElementById('topic-modal-title').textContent = `${agent.emoji} ${agent.name}`;
-  const list = document.getElementById('topic-list');
-  list.innerHTML = '';
-  for (const t of agent.topics) {
-    const btn = document.createElement('button');
-    btn.className = 'topic-btn';
-    btn.textContent = t;
-    btn.addEventListener('click', () => launchAgent(agent.id, t));
-    list.appendChild(btn);
+function switchView(v) {
+  state.view = v;
+  document.body.setAttribute('data-view', v);
+  ['hive','grid','list','terminal'].forEach(k => {
+    const el = $(`#view-${k}`); if (!el) return;
+    el.hidden = v !== k;
+    el.classList.toggle('active', v === k);
+  });
+  const vml = $('#view-mode-label'); if (vml) vml.textContent = v.charAt(0).toUpperCase() + v.slice(1);
+  const pc = $('#pulse-core'); if (pc) pc.style.display = v === 'hive' ? '' : 'none';
+  if (v === 'terminal' && state.activeSession) {
+    const rec = state.terminals[state.activeSession];
+    if (rec && rec.fit) setTimeout(() => { try { rec.fit.fit(); } catch {} }, 100);
   }
-  document.getElementById('topic-modal').classList.add('open');
 }
-
-function closeTopicModal(e) {
-  document.getElementById('topic-modal').classList.remove('open');
+function showHive() { switchView('hive'); renderHive(); }
+function showGrid() { switchView('grid'); renderGrid(); }
+function showList() { switchView('list'); renderList(); }
+function showTerminal() { switchView('terminal'); }
+function cycleView() {
+  const order = ['hive','grid','list'];
+  const i = order.indexOf(state.view);
+  const next = order[(i+1) % order.length];
+  ({ hive: showHive, grid: showGrid, list: showList })[next]();
 }
+window.showHive = showHive; window.showGrid = showGrid; window.showList = showList; window.showTerminal = showTerminal; window.cycleView = cycleView;
 
-// ── Launch Agent Session ───────────────────────────────────────
-let launching = false;
-async function launchAgent(agentId, topic, initialPrompt) {
-  if (launching) return; // Prevent double-click
-  document.getElementById('topic-modal').classList.remove('open');
-  const sessionId = topic ? `${agentId}:${topic}` : agentId;
+/* ═══════════════════════════════════════════════════════════════════
+ * AGENT DETAIL CARD
+ * ═══════════════════════════════════════════════════════════════════ */
+async function openDetail(id) {
+  const a = state.agentsById[id]; if (!a) return;
+  state.activeAgent = a; selectedAgentId = id; window.selectedAgentId = id;
+  const card = $('#detail-card');
+  card.hidden = false;
+  card.style.setProperty('--cell-color', a.color || '#ffb347');
+  $('#detail-emoji').textContent = a.emoji || '✦';
+  $('#detail-name').textContent = a.name || a.id;
+  $('#detail-role').textContent = a.role || '';
+  $('#detail-vibe').textContent = a.vibe || '';
+  $('#detail-category').textContent = a.category || '—';
+  $('#detail-topics-count').textContent = a.topics?.length || 0;
+  const mood = moodOf(a);
+  $('#detail-mood').className = `detail-mood mood-${mood}`;
+  $('#detail-mood').textContent = mood.toUpperCase();
 
-  if (terminals.has(sessionId)) {
-    switchToSession(sessionId);
-    return;
-  }
+  const tWrap = $('#detail-topics');
+  tWrap.innerHTML = (a.topics || []).map(t => `<button class="chip" onclick="requestLaunch('${esc(a.id)}','${esc(t)}')">${esc(t)}</button>`).join('') || '<span class="dim">no topics</span>';
 
-  launching = true;
-  showToast('Launching session...', 'info');
   try {
-    const res = await fetch('/api/sessions', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ agentId, topic, cols: 120, rows: 30, initialPrompt }),
+    const m = await api(`/api/agents/${encodeURIComponent(a.id)}/metrics`);
+    $('#detail-sessions7').textContent = m?.sessions7d ?? m?.sessions ?? '—';
+  } catch { $('#detail-sessions7').textContent = '—'; }
+
+  setAura(a.color);
+}
+window.openDetail = openDetail;
+
+function closeDetail() { $('#detail-card').hidden = true; state.activeAgent = null; setAura(null); }
+window.closeDetail = closeDetail;
+
+function detailInspect() { if (state.activeAgent) openInspector(state.activeAgent.id); }
+function detailMemoryGarden() { if (state.activeAgent) openMemoryGarden(state.activeAgent.id); }
+function detailQuickChat() { if (state.activeAgent) openQuickChat(state.activeAgent.id); }
+function detailLaunch() { if (state.activeAgent) requestLaunch(state.activeAgent.id); }
+window.detailInspect = detailInspect; window.detailMemoryGarden = detailMemoryGarden; window.detailQuickChat = detailQuickChat; window.detailLaunch = detailLaunch;
+
+/* ═══════════════════════════════════════════════════════════════════
+ * SESSION LAUNCH
+ * ═══════════════════════════════════════════════════════════════════ */
+function requestLaunch(agentId, topic) {
+  const a = state.agentsById[agentId]; if (!a) return;
+  selectedAgentId = agentId; window.selectedAgentId = agentId;
+  if (topic) return launchAgent(agentId, topic);
+  if (!a.topics || a.topics.length === 0) return launchAgent(agentId);
+  $('#topic-modal-title').textContent = `${a.emoji || ''} ${a.name || a.id}`;
+  $('#topic-list').innerHTML = a.topics.map(t => `<button class="topic-item" onclick="launchAgent('${esc(agentId)}','${esc(t)}')">${esc(t)}</button>`).join('');
+  $('#topic-modal').classList.add('open');
+}
+window.requestLaunch = requestLaunch;
+
+function closeTopicModal() { $('#topic-modal').classList.remove('open'); }
+window.closeTopicModal = closeTopicModal;
+
+async function launchAgent(agentId, topic) {
+  closeTopicModal();
+  try {
+    const s = await api('/api/sessions', { method: 'POST', body: { agentId, topic } });
+    toast(`Summoned ${state.agentsById[agentId]?.name || agentId}${topic ? ' · '+topic : ''}`, 'ok');
+    openTerminal(s.id, agentId, topic);
+    await loadSessions(); renderSessionTabs(); renderHive();
+  } catch (e) { toast(`Launch failed: ${e.message}`, 'err'); }
+}
+window.launchAgent = launchAgent;
+
+async function killCurrentSession() {
+  if (!state.activeSession) return;
+  try {
+    await api(`/api/sessions/${encodeURIComponent(state.activeSession)}`, { method: 'DELETE' });
+    const rec = state.terminals[state.activeSession];
+    if (rec) { try { rec.ws.close(); } catch {} try { rec.term.dispose(); } catch {} }
+    delete state.terminals[state.activeSession];
+    state.activeSession = null;
+    await loadSessions(); renderSessionTabs(); showHive();
+  } catch (e) { toast(`End failed: ${e.message}`, 'err'); }
+}
+window.killCurrentSession = killCurrentSession;
+
+/* ═══════════════════════════════════════════════════════════════════
+ * TERMINAL
+ * ═══════════════════════════════════════════════════════════════════ */
+function openTerminal(sessionId, agentId, topic) {
+  let rec = state.terminals[sessionId];
+  if (!rec) {
+    const term = new window.Terminal({
+      fontFamily: '"JetBrains Mono", ui-monospace, monospace',
+      fontSize: 13,
+      cursorBlink: true,
+      theme: { background: 'rgba(0,0,0,0)', foreground: '#f4e6cc', cursor: '#ffb347', selectionBackground: '#ffb34744' },
+      allowTransparency: true,
     });
+    const fit = new window.FitAddon.FitAddon();
+    const links = new window.WebLinksAddon.WebLinksAddon();
+    const search = new window.SearchAddon.SearchAddon();
+    term.loadAddon(fit); term.loadAddon(links); term.loadAddon(search);
 
-    if (!res.ok) {
-      const err = await res.json();
-      showToast(err.error || 'Failed to create session', 'error');
-      return;
-    }
-
-    const data = await res.json();
-    createTerminal(data.id, agentId, topic);
-    switchToSession(data.id);
-    const agent = agents.find(a => a.id === agentId);
-    showToast(`${agent?.emoji || '🤖'} ${agent?.name || agentId} started${topic ? ` (${topic})` : ''}`, 'success');
-  } catch (err) {
-    console.error('Failed to launch agent:', err);
-    showToast('Failed to launch session', 'error');
-  } finally {
-    launching = false;
-  }
-}
-
-// ── Terminal Management ────────────────────────────────────────
-function createTerminal(sessionId, agentId, topic) {
-  const agent = agents.find(a => a.id === agentId) || { name: agentId, emoji: '🤖' };
-  const accent = agent.color || agentAccentColors[agentId] || '#818cf8';
-
-  const terminal = new window.Terminal({
-    fontFamily: "'JetBrains Mono', 'Cascadia Code', 'Fira Code', monospace",
-    fontSize: 14,
-    lineHeight: 1.3,
-    theme: {
-      background: '#050508',
-      foreground: '#e4e4ec',
-      cursor: accent,
-      cursorAccent: '#050508',
-      selectionBackground: `${accent}40`,
-      black: '#1a1a2e', brightBlack: '#4a4a6e',
-      red: '#ff5555', brightRed: '#ff6e6e',
-      green: '#50fa7b', brightGreen: '#69ff94',
-      yellow: '#f1fa8c', brightYellow: '#ffffa5',
-      blue: '#818cf8', brightBlue: '#a78bff',
-      magenta: '#ff79c6', brightMagenta: '#ff92df',
-      cyan: '#8be9fd', brightCyan: '#a4ffff',
-      white: '#f8f8f2', brightWhite: '#ffffff',
-    },
-    cursorBlink: true,
-    scrollback: 10000,
-    allowProposedApi: true,
-  });
-
-  const fitAddon = new window.FitAddon.FitAddon();
-  const searchAddon = window.SearchAddon ? new window.SearchAddon.SearchAddon() : null;
-  terminal.loadAddon(fitAddon);
-  terminal.loadAddon(new window.WebLinksAddon.WebLinksAddon());
-  if (searchAddon) terminal.loadAddon(searchAddon);
-
-  // WebSocket with auto-reconnect
-  const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const wsUrl = `${wsProtocol}//${window.location.host}/ws/terminal/${encodeURIComponent(sessionId)}`;
-  let ws = null;
-  let reconnectAttempts = 0;
-  let reconnectTimer = null;
-  let intentionallyClosed = false;
-
-  function connectWs() {
-    ws = new WebSocket(wsUrl);
-
-    ws.onopen = () => {
-      reconnectAttempts = 0;
-      setTimeout(() => {
-        fitAddon.fit();
-        ws.send(JSON.stringify({ type: 'resize', cols: terminal.cols, rows: terminal.rows }));
-      }, 100);
-    };
-
-    ws.onmessage = (e) => {
-      try {
-        const ctrl = JSON.parse(e.data);
-        if (ctrl.type === 'session_ended') {
-          const e2 = terminals.get(sessionId);
-          sendNotification('Session Ended', `${e2?.agent?.name || sessionId} session finished`);
-          return;
-        }
-        if (ctrl.type === 'idle_timeout') {
-          showToast('Session timed out due to inactivity', 'warning');
-          sendNotification('Session Timeout', `${sessionId} was idle too long`);
-          return;
-        }
-        if (ctrl.type === 'idle_warning') {
-          showToast('Session will timeout in 5 minutes', 'warning');
-          return;
-        }
-        if (ctrl.type === 'server_shutdown') {
-          showToast('Server shutting down...', 'warning');
-          return;
-        }
-      } catch {}
-      terminal.write(e.data);
-      // Track last data time for status indicator (#6)
-      const entry = terminals.get(sessionId);
-      if (entry) entry.lastDataTime = Date.now();
-      // TTS — speak new output if enabled and this is the focused session
-      if (sessionId === currentSessionId) ttsHandleData(e.data);
-    };
-
-    ws.onclose = () => {
-      if (intentionallyClosed) return;
-      if (reconnectAttempts < 15) {
-        const delay = Math.min(1000 * Math.pow(1.5, reconnectAttempts), 30000);
-        reconnectAttempts++;
-        terminal.write(`\r\n\x1b[90m[Reconnecting... ${reconnectAttempts}/15]\x1b[0m\r\n`);
-        reconnectTimer = setTimeout(() => {
-          connectWs();
-          const entry = terminals.get(sessionId);
-          if (entry) entry.ws = ws;
-        }, delay);
-      } else {
-        terminal.write('\r\n\x1b[31m[Connection lost. Click agent to reconnect.]\x1b[0m\r\n');
-      }
-    };
-  }
-
-  connectWs();
-
-  terminal.onData((data) => {
-    if (ws && ws.readyState === WebSocket.OPEN) ws.send(data);
-  });
-
-  const resizeObserver = new ResizeObserver(() => {
-    fitAddon.fit();
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: 'resize', cols: terminal.cols, rows: terminal.rows }));
-    }
-  });
-
-  terminals.set(sessionId, {
-    terminal, fitAddon, searchAddon, ws, agent, topic, resizeObserver, accent,
-    lastDataTime: Date.now(),
-    autoScroll: true,
-    intentionallyClosed: () => { intentionallyClosed = true; },
-    clearReconnect: () => { if (reconnectTimer) clearTimeout(reconnectTimer); },
-  });
-
-  addSessionTab(sessionId, agent, topic, accent);
-  updateSessionCount();
-  loadAgents(); // Refresh active status
-}
-
-function switchToSession(sessionId) {
-  const entry = terminals.get(sessionId);
-  if (!entry) return;
-
-  currentSessionId = sessionId;
-
-  // Breadcrumbs (#10)
-  document.getElementById('breadcrumb-agent').textContent = `${entry.agent.emoji} ${entry.agent.name}`;
-  const topicSep = document.getElementById('breadcrumb-topic-sep');
-  const topicBc = document.getElementById('breadcrumb-topic');
-  if (entry.topic) {
-    topicSep.style.display = '';
-    topicBc.style.display = '';
-    topicBc.textContent = entry.topic;
-  } else {
-    topicSep.style.display = 'none';
-    topicBc.style.display = 'none';
-  }
-
-  // Set accent color on terminal header
-  const accent = entry.accent || '#818cf8';
-  document.getElementById('terminal-header-bar').style.borderBottomColor = accent + '40';
-
-  document.getElementById('dashboard-view').classList.remove('active');
-  document.getElementById('terminal-view').classList.add('active');
-
-  const container = document.getElementById('terminal-container');
-
-  // Hide all terminal wrappers, show only the active one
-  for (const child of container.children) {
-    child.style.display = 'none';
-  }
-
-  // Create a persistent wrapper for this terminal if it doesn't exist
-  let wrapper = container.querySelector(`[data-terminal="${CSS.escape(sessionId)}"]`);
-  if (!wrapper) {
-    wrapper = document.createElement('div');
-    wrapper.dataset.terminal = sessionId;
-    wrapper.style.cssText = 'width:100%;height:100%';
-    container.appendChild(wrapper);
-    entry.terminal.open(wrapper);
-  }
-  wrapper.style.display = '';
-
-  entry.fitAddon.fit();
-  entry.resizeObserver.observe(wrapper);
-  entry.terminal.focus();
-
-  document.querySelectorAll('.session-tab').forEach(tab => {
-    tab.classList.toggle('active', tab.dataset.session === sessionId);
-  });
-}
-
-// ── Session Tabs ───────────────────────────────────────────────
-function addSessionTab(sessionId, agent, topic, accent) {
-  const tabs = document.getElementById('session-tabs');
-  const tab = document.createElement('button');
-  tab.className = 'session-tab';
-  tab.dataset.session = sessionId;
-  tab.dataset.startTime = Date.now();
-  if (accent) tab.style.borderLeftColor = accent;
-
-  // Status dot (#6) + emoji + name + timer (#7) + close button
-  const statusDot = document.createElement('span');
-  statusDot.className = 'tab-status active';
-  tab.appendChild(statusDot);
-
-  const emojiSpan = document.createElement('span');
-  emojiSpan.className = 'tab-emoji';
-  emojiSpan.textContent = agent.emoji;
-  tab.appendChild(emojiSpan);
-
-  const nameSpan = document.createElement('span');
-  nameSpan.textContent = agent.name + (topic ? `: ${topic}` : '');
-  tab.appendChild(nameSpan);
-
-  const timerSpan = document.createElement('span');
-  timerSpan.className = 'tab-timer';
-  timerSpan.textContent = '0m';
-  tab.appendChild(timerSpan);
-
-  const closeBtn = document.createElement('button');
-  closeBtn.className = 'tab-close';
-  closeBtn.innerHTML = '&#215;';
-  closeBtn.addEventListener('click', (e) => { e.stopPropagation(); closeSession(sessionId); });
-  tab.appendChild(closeBtn);
-
-  tab.addEventListener('click', () => switchToSession(sessionId));
-  tabs.appendChild(tab);
-}
-
-function removeSessionTab(sessionId) {
-  const tab = document.querySelector(`.session-tab[data-session="${CSS.escape(sessionId)}"]`);
-  if (tab) tab.remove();
-}
-
-// ── Session Timer Update (#7) — runs every 30s ──────────────────
-setInterval(() => {
-  document.querySelectorAll('.session-tab').forEach(tab => {
-    const start = parseInt(tab.dataset.startTime);
-    if (!start) return;
-    const mins = Math.floor((Date.now() - start) / 60000);
-    const timer = tab.querySelector('.tab-timer');
-    if (timer) timer.textContent = mins < 60 ? `${mins}m` : `${Math.floor(mins / 60)}h${mins % 60}m`;
-  });
-}, 30000);
-
-// ── Session Status Update (#6) — check I/O activity ─────────────
-setInterval(() => {
-  for (const [sid, entry] of terminals) {
-    const tab = document.querySelector(`.session-tab[data-session="${CSS.escape(sid)}"]`);
-    if (!tab) continue;
-    const dot = tab.querySelector('.tab-status');
-    if (!dot) continue;
-    if (!entry.ws || entry.ws.readyState !== WebSocket.OPEN) {
-      dot.className = 'tab-status disconnected';
-    } else if (entry.lastDataTime && Date.now() - entry.lastDataTime < 30000) {
-      dot.className = 'tab-status active';
-    } else {
-      dot.className = 'tab-status idle';
-    }
-  }
-}, 5000);
-
-// ── Shortcuts Overlay (#9) ──────────────────────────────────────
-function toggleShortcutsOverlay() {
-  const overlay = document.getElementById('shortcuts-overlay');
-  overlay.classList.toggle('open');
-}
-
-// ── File Upload to Terminal (B4 #6) ─────────────────────────────
-async function uploadFileToSession(file) {
-  if (!currentSessionId) { showToast('No active session', 'warning'); return; }
-  const entry = terminals.get(currentSessionId);
-  if (!entry) return;
-  if (file.size > 10 * 1024 * 1024) { showToast('File too large (>10MB)', 'error'); return; }
-
-  showToast(`Uploading ${file.name}...`, 'info');
-  try {
-    const buf = await file.arrayBuffer();
-    const res = await fetch(`/api/agents/${encodeURIComponent(entry.agent.id)}/upload?filename=${encodeURIComponent(file.name)}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/octet-stream' },
-      body: buf,
-    });
-    const data = await res.json();
-    if (res.ok) {
-      // Send the file path to the terminal so the agent can read it
-      if (entry.ws && entry.ws.readyState === WebSocket.OPEN) {
-        entry.ws.send(`Please read this file: ${data.path}\n`);
-      }
-      showToast(`Uploaded: ${file.name}`, 'success');
-    } else {
-      showToast(`Upload failed: ${data.error}`, 'error');
-    }
-  } catch (err) {
-    showToast(`Upload error: ${err.message}`, 'error');
-  }
-}
-
-// Drag and drop on terminal container
-document.addEventListener('DOMContentLoaded', () => {
-  const container = document.getElementById('terminal-container');
-  if (!container) return;
-  container.addEventListener('dragover', (e) => { e.preventDefault(); container.style.outline = '2px dashed var(--accent)'; });
-  container.addEventListener('dragleave', () => { container.style.outline = ''; });
-  container.addEventListener('drop', (e) => {
-    e.preventDefault();
-    container.style.outline = '';
-    const files = Array.from(e.dataTransfer?.files || []);
-    for (const f of files) uploadFileToSession(f);
-  });
-});
-
-// ── Voice Input (B4 #9) ─────────────────────────────────────────
-let voiceRecognition = null;
-let voiceRecording = false;
-
-function setupVoiceInput() {
-  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SR) return false;
-  voiceRecognition = new SR();
-  voiceRecognition.lang = 'en-US';
-  voiceRecognition.continuous = false;
-  voiceRecognition.interimResults = false;
-  voiceRecognition.onresult = (e) => {
-    const text = e.results[0][0].transcript;
-    if (currentSessionId) {
-      const entry = terminals.get(currentSessionId);
-      if (entry?.ws?.readyState === WebSocket.OPEN) {
-        entry.ws.send(text + '\n');
-        showToast(`Voice: "${text}"`, 'success');
-      }
-    }
-  };
-  voiceRecognition.onerror = (e) => {
-    showToast(`Voice error: ${e.error}`, 'error');
-    voiceRecording = false;
-    document.getElementById('voice-btn')?.classList.remove('recording');
-  };
-  voiceRecognition.onend = () => {
-    voiceRecording = false;
-    document.getElementById('voice-btn')?.classList.remove('recording');
-  };
-  return true;
-}
-
-function toggleVoiceInput() {
-  if (!voiceRecognition && !setupVoiceInput()) {
-    showToast('Speech recognition not supported in this browser', 'error');
-    return;
-  }
-  if (voiceRecording) {
-    voiceRecognition.stop();
-    voiceRecording = false;
-    document.getElementById('voice-btn')?.classList.remove('recording');
-  } else {
-    try {
-      voiceRecognition.start();
-      voiceRecording = true;
-      document.getElementById('voice-btn')?.classList.add('recording');
-      showToast('Listening... speak now', 'info');
-    } catch {}
-  }
-}
-
-// ── Voice Output / TTS (post-launch polish) ─────────────────────
-let ttsEnabled = localStorage.getItem('ttsEnabled') === 'true';
-let ttsBuffer = '';
-let ttsFlushTimer = null;
-
-function toggleTTS() {
-  if (!('speechSynthesis' in window)) {
-    showToast('Text-to-speech not supported in this browser', 'error');
-    return;
-  }
-  ttsEnabled = !ttsEnabled;
-  localStorage.setItem('ttsEnabled', String(ttsEnabled));
-  document.getElementById('tts-btn')?.classList.toggle('active', ttsEnabled);
-  if (ttsEnabled) {
-    showToast('Text-to-speech ON — terminal output will be spoken', 'success');
-  } else {
-    speechSynthesis.cancel();
-    ttsBuffer = '';
-    showToast('Text-to-speech OFF', 'info');
-  }
-}
-
-// Apply saved state on load
-document.addEventListener('DOMContentLoaded', () => {
-  if (ttsEnabled) document.getElementById('tts-btn')?.classList.add('active');
-});
-
-// Strip ANSI codes and control characters from text before speaking
-function ttsClean(text) {
-  return text
-    .replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '')  // ANSI escape codes
-    .replace(/[\x00-\x09\x0b-\x1f\x7f]/g, '') // control chars except newline
-    .replace(/[│├└─━╭╮╯╰┃╔╗╚╝═║]/g, '')      // box drawing
-    .trim();
-}
-
-function speakChunk(text) {
-  if (!ttsEnabled || !text) return;
-  const utterance = new SpeechSynthesisUtterance(text);
-  utterance.rate = 1.1;
-  utterance.pitch = 1.0;
-  utterance.volume = 0.9;
-  speechSynthesis.speak(utterance);
-}
-
-function ttsHandleData(data) {
-  if (!ttsEnabled) return;
-  ttsBuffer += data;
-  if (ttsFlushTimer) clearTimeout(ttsFlushTimer);
-  // Flush on a complete line OR after 800ms of silence
-  const newlineIdx = ttsBuffer.lastIndexOf('\n');
-  if (newlineIdx > 0) {
-    const toSpeak = ttsClean(ttsBuffer.slice(0, newlineIdx));
-    ttsBuffer = ttsBuffer.slice(newlineIdx + 1);
-    if (toSpeak.length > 3) speakChunk(toSpeak);
-  }
-  ttsFlushTimer = setTimeout(() => {
-    const toSpeak = ttsClean(ttsBuffer);
-    ttsBuffer = '';
-    if (toSpeak.length > 3) speakChunk(toSpeak);
-  }, 800);
-}
-
-// Stop speaking when user clicks anywhere (let them interrupt)
-document.addEventListener('click', () => {
-  if (ttsEnabled && speechSynthesis.speaking) {
-    speechSynthesis.cancel();
-    ttsBuffer = '';
-  }
-}, true);
-
-// ── Skill Execution (B4 #11) ────────────────────────────────────
-let executingSkill = null;
-
-function openSkillExec(skillId, skillName) {
-  executingSkill = { id: skillId, name: skillName };
-  document.getElementById('skillexec-title').textContent = `Run: ${skillName}`;
-  document.getElementById('skillexec-args').value = '';
-  document.getElementById('skillexec-output').textContent = '';
-  document.getElementById('skillexec-output').style.display = 'none';
-  document.getElementById('skillexec-overlay').classList.add('open');
-  setTimeout(() => document.getElementById('skillexec-args').focus(), 100);
-}
-
-function closeSkillExec() {
-  document.getElementById('skillexec-overlay').classList.remove('open');
-  executingSkill = null;
-}
-
-async function runSkill() {
-  if (!executingSkill) return;
-  const args = document.getElementById('skillexec-args').value;
-  const out = document.getElementById('skillexec-output');
-  const btn = document.getElementById('skillexec-run');
-  btn.disabled = true;
-  btn.textContent = 'Running...';
-  out.style.display = '';
-  out.textContent = 'Executing skill...';
-  try {
-    const res = await fetch(`/api/skills/${encodeURIComponent(executingSkill.id)}/execute`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ args }),
-    });
-    const data = await res.json();
-    out.textContent = data.output || data.error || '(no output)';
-  } catch (err) {
-    out.textContent = `Error: ${err.message}`;
-  } finally {
-    btn.disabled = false;
-    btn.textContent = 'Run Skill';
-  }
-}
-
-// ── Session Share (B4 #12) ──────────────────────────────────────
-async function shareCurrentSession() {
-  if (!currentSessionId) { showToast('No active session', 'warning'); return; }
-  const entry = terminals.get(currentSessionId);
-  if (!entry) return;
-
-  // Capture terminal scrollback
-  let content = '';
-  const buf = entry.terminal.buffer.active;
-  for (let i = 0; i < buf.length; i++) {
-    const line = buf.getLine(i);
-    if (line) content += line.translateToString(true) + '\n';
-  }
-
-  try {
-    const res = await fetch('/api/share', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ agentId: entry.agent.id, topic: entry.topic, content }),
-    });
-    const data = await res.json();
-    const url = window.location.origin + data.url;
-    await navigator.clipboard?.writeText(url);
-    showToast(`Share link copied: ${url}`, 'success');
-  } catch (err) {
-    showToast(`Share failed: ${err.message}`, 'error');
-  }
-}
-
-// ── Agent Health Panel (B5 #6) ──────────────────────────────────
-let healthCache = {};
-
-async function openAgentHealth() {
-  document.getElementById('health-overlay').classList.add('open');
-  document.getElementById('health-list').innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-muted)">Scanning agents...</div>';
-  try {
-    const res = await fetch('/api/health/agents');
-    const list = await res.json();
-    healthCache = {};
-    for (const h of list) healthCache[h.agentId] = h;
-    list.sort((a, b) => a.score - b.score);
-    const fresh = list.filter(h => h.freshness === 'fresh').length;
-    const stale = list.filter(h => h.freshness === 'stale' || h.freshness === 'cold').length;
-    document.getElementById('health-summary').textContent = `${list.length} AGENTS · ${fresh} FRESH · ${stale} NEED ATTENTION`;
-    const container = document.getElementById('health-list');
+    const container = $('#terminal-container');
     container.innerHTML = '';
-    const HEALTH_FILES = ["IDENTITY.md","SOUL.md","AGENTS.md","USER.md","TOOLS.md","MEMORY.md","CLAUDE.md"];
-    for (const h of list) {
-      const agent = agents.find(a => a.id === h.agentId);
-      const scoreClass = h.score >= 80 ? 'high' : h.score >= 50 ? 'mid' : 'low';
-      const dots = HEALTH_FILES.map(f => {
-        const fh = h.files[f];
-        const cls = fh?.filled ? 'filled' : fh?.exists ? 'exists' : '';
-        return `<div class="health-file-dot ${cls}" title="${esc(f)}: ${fh?.size||0}b"></div>`;
-      }).join('');
-      const row = document.createElement('div');
-      row.className = 'health-row';
-      row.innerHTML = `<span class="health-emoji">${esc(agent?.emoji||'🤖')}</span><span class="health-name">${esc(agent?.name||h.agentId)}</span><div class="health-files">${dots}</div><span class="health-freshness ${esc(h.freshness)}">${esc(h.freshness)}</span><span class="health-score ${scoreClass}">${h.score}/100</span>`;
-      row.addEventListener('click', () => { closeAgentHealth(); openInspector(h.agentId); });
-      container.appendChild(row);
-    }
-  } catch (err) {
-    document.getElementById('health-list').innerHTML = `<div style="padding:40px;text-align:center;color:var(--danger)">Failed: ${esc(err.message)}</div>`;
-  }
-}
+    const div = document.createElement('div'); div.className = 'term-inner';
+    container.appendChild(div);
+    term.open(div);
+    try { fit.fit(); } catch {}
 
-function closeAgentHealth() {
-  document.getElementById('health-overlay').classList.remove('open');
-}
-
-async function loadHealthForCards() {
-  try {
-    const res = await fetch('/api/health/agents');
-    const list = await res.json();
-    healthCache = {};
-    for (const h of list) healthCache[h.agentId] = h;
-    document.querySelectorAll('.agent-card[data-agent]').forEach(card => {
-      const id = card.dataset.agent;
-      const h = healthCache[id];
-      if (!h) return;
-      const old = card.querySelector('.freshness-dot');
-      if (old) old.remove();
-      const dot = document.createElement('div');
-      dot.className = `freshness-dot ${h.freshness}`;
-      dot.title = `Memory: ${h.freshness} · Score ${h.score}/100`;
-      card.appendChild(dot);
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const ws = new WebSocket(`${proto}//${location.host}/ws/terminal/${encodeURIComponent(sessionId)}`);
+    ws.addEventListener('open', () => {
+      if (state.authToken) ws.send(JSON.stringify({ type:'auth', token: state.authToken }));
+      try { ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows })); } catch {}
     });
-  } catch {}
-}
-
-// ── Today's Digest (B4 #5) ──────────────────────────────────────
-async function openDigest() {
-  document.getElementById('digest-overlay').classList.add('open');
-  document.getElementById('digest-content').innerHTML = '<div style="color:var(--text-dim);font-size:12px">Loading...</div>';
-  try {
-    const res = await fetch('/api/digest/today');
-    const d = await res.json();
-    document.getElementById('digest-date').textContent = new Date(d.date).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
-
-    const stats = `
-      <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px">
-        <div style="padding:14px;background:var(--bg-surface);border-radius:var(--radius-sm);border-left:3px solid var(--accent)">
-          <div style="font-size:24px;font-weight:700;color:var(--text)">${d.sessions}</div>
-          <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:1px">Sessions</div>
-        </div>
-        <div style="padding:14px;background:var(--bg-surface);border-radius:var(--radius-sm);border-left:3px solid var(--success)">
-          <div style="font-size:24px;font-weight:700;color:var(--text)">${d.agentsUsed.length}</div>
-          <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:1px">Agents Used</div>
-        </div>
-        <div style="padding:14px;background:var(--bg-surface);border-radius:var(--radius-sm);border-left:3px solid var(--warning)">
-          <div style="font-size:24px;font-weight:700;color:var(--text)">${d.memoryUpdates}</div>
-          <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:1px">Memory Updates</div>
-        </div>
-        <div style="padding:14px;background:var(--bg-surface);border-radius:var(--radius-sm);border-left:3px solid #ec4899">
-          <div style="font-size:24px;font-weight:700;color:var(--text)">${d.topicsCreated}</div>
-          <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:1px">Topics Created</div>
-        </div>
-      </div>
-    `;
-    const events = d.events.length > 0
-      ? `<div><div class="detail-label" style="margin-bottom:6px">Recent events</div>
-          ${d.events.slice(0, 8).map(e => `<div style="font-size:12px;padding:6px 0;border-bottom:1px solid var(--border);color:var(--text-secondary)">${esc(e.message)}</div>`).join('')}
-        </div>`
-      : '<div style="text-align:center;color:var(--text-dim);font-size:12px;padding:20px">No activity yet today</div>';
-
-    document.getElementById('digest-content').innerHTML = stats + events;
-  } catch {
-    document.getElementById('digest-content').innerHTML = '<div style="color:var(--danger)">Failed to load digest</div>';
-  }
-}
-
-function closeDigest() {
-  document.getElementById('digest-overlay').classList.remove('open');
-}
-
-// ── Session History Search (B4 #2) ──────────────────────────────
-function openHistorySearch() {
-  document.getElementById('history-search-overlay').classList.add('open');
-  document.getElementById('history-search-input').value = '';
-  document.getElementById('history-search-results').innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-dim)">Type to search across all session logs</div>';
-  setTimeout(() => document.getElementById('history-search-input').focus(), 100);
-}
-
-function closeHistorySearch() {
-  document.getElementById('history-search-overlay').classList.remove('open');
-}
-
-let historySearchTimer = null;
-document.addEventListener('DOMContentLoaded', () => {
-  document.getElementById('history-search-input')?.addEventListener('input', (e) => {
-    if (historySearchTimer) clearTimeout(historySearchTimer);
-    const q = e.target.value.trim();
-    if (!q) {
-      document.getElementById('history-search-results').innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-dim)">Type to search</div>';
-      return;
-    }
-    historySearchTimer = setTimeout(async () => {
+    ws.addEventListener('message', (e) => {
       try {
-        const res = await fetch('/api/history/search?q=' + encodeURIComponent(q));
-        const data = await res.json();
-        const container = document.getElementById('history-search-results');
-        if (data.length === 0) {
-          container.innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-dim)">No matches</div>';
-          return;
-        }
-        container.innerHTML = '';
-        for (const r of data) {
-          const agent = agents.find(a => a.id === r.agentId);
-          const card = document.createElement('div');
-          card.className = 'topic-card';
-          card.style.flexDirection = 'column';
-          card.style.alignItems = 'flex-start';
-          card.innerHTML = `
-            <div style="display:flex;align-items:center;gap:8px;width:100%">
-              <span style="font-size:16px">${esc(agent?.emoji || '🤖')}</span>
-              <span class="topic-card-name">${esc(agent?.name || r.agentId)}${r.topic ? ': ' + esc(r.topic) : ''}</span>
-              <span class="topic-card-time">${r.matchCount} matches</span>
-            </div>
-            <div style="font-size:11px;color:var(--text-muted);font-family:var(--font-mono);margin-top:6px;line-height:1.5">${esc(r.snippet)}</div>
-          `;
-          container.appendChild(card);
-        }
-      } catch {}
-    }, 250);
-  });
-});
-
-// ── Settings Panel (B3 #20) ─────────────────────────────────────
-async function openSettings() {
-  document.getElementById('settings-notifications').checked = notificationsEnabled;
-  document.getElementById('settings-accent').value = localStorage.getItem('customAccent') || '#818cf8';
-  document.getElementById('settings-overlay').classList.add('open');
-
-  // Load webhooks
-  try {
-    const res = await fetch('/api/webhooks/outgoing');
-    const urls = await res.json();
-    document.getElementById('settings-webhooks').value = urls.join('\n');
-  } catch {}
-
-  // Load webhook secret
-  try {
-    const res = await fetch('/api/webhooks/secret');
-    const data = await res.json();
-    document.getElementById('settings-webhook-secret').textContent = data.secret;
-  } catch {}
-}
-function closeSettings() {
-  document.getElementById('settings-overlay').classList.remove('open');
-}
-function toggleNotifications(enabled) {
-  notificationsEnabled = enabled;
-  localStorage.setItem('notifications', String(enabled));
-  if (enabled) requestNotifications();
-}
-
-// Theme Customizer (B4 #16)
-function setCustomAccent(color) {
-  document.documentElement.style.setProperty('--accent', color);
-  document.documentElement.style.setProperty('--accent-soft', color + '26');
-  document.documentElement.style.setProperty('--accent-glow', color + '66');
-  localStorage.setItem('customAccent', color);
-}
-function resetCustomAccent() {
-  document.documentElement.style.removeProperty('--accent');
-  document.documentElement.style.removeProperty('--accent-soft');
-  document.documentElement.style.removeProperty('--accent-glow');
-  localStorage.removeItem('customAccent');
-  document.getElementById('settings-accent').value = '#818cf8';
-}
-// Apply on load
-const savedAccent = localStorage.getItem('customAccent');
-if (savedAccent) setCustomAccent(savedAccent);
-
-async function saveWebhooks() {
-  const text = document.getElementById('settings-webhooks').value;
-  const urls = text.split('\n').map(u => u.trim()).filter(u => u);
-  try {
-    await fetch('/api/webhooks/outgoing', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ urls }),
+        const msg = JSON.parse(e.data);
+        if (msg.type === 'data') term.write(msg.data);
+        else if (msg.type === 'exit') term.writeln(`\r\n\x1b[90m[exit ${msg.code ?? ''}]\x1b[0m`);
+      } catch { term.write(e.data); }
     });
-    showToast('Webhooks saved', 'success');
-  } catch {
-    showToast('Save failed', 'error');
-  }
-}
+    ws.addEventListener('close', () => term.writeln('\r\n\x1b[90m[disconnected]\x1b[0m'));
+    term.onData(d => { try { ws.send(JSON.stringify({ type: 'input', data: d })); } catch {} });
+    window.addEventListener('resize', () => { try { fit.fit(); ws.send(JSON.stringify({ type:'resize', cols: term.cols, rows: term.rows })); } catch {} });
 
-// ── Onboarding Tour (B3 #13) ────────────────────────────────────
-const tourSteps = [
-  { title: 'Welcome to Command Center', text: 'Manage all your AI agents from one place. Let me show you around in 5 quick steps.' },
-  { title: 'Launch any agent', text: 'Click any agent card to start a session. Right-click for more options like Quick Chat or workspace inspection.' },
-  { title: 'Command Palette', text: 'Press Ctrl+K (or Cmd+K) anywhere to fuzzy-search agents, topics, and commands. The fastest way to navigate.' },
-  { title: 'Inspect & manage', text: 'Use the header buttons to browse Topics, Skills, Activity Feed, and Settings. Right-click an agent → Inspect Workspace to peek inside.' },
-  { title: 'Themes & shortcuts', text: 'Cycle themes with the moon button. Press ? anytime to see all keyboard shortcuts. Have fun!' },
-];
-let currentTourStep = 0;
-
-function startTour() {
-  currentTourStep = 0;
-  showTourStep();
-  document.getElementById('tour-overlay').classList.add('open');
-}
-
-function showTourStep() {
-  const step = tourSteps[currentTourStep];
-  document.getElementById('tour-step-num').textContent = `Step ${currentTourStep + 1} of ${tourSteps.length}`;
-  document.getElementById('tour-title').textContent = step.title;
-  document.getElementById('tour-text').textContent = step.text;
-  document.getElementById('tour-next').textContent = currentTourStep === tourSteps.length - 1 ? 'Finish' : 'Next';
-}
-
-function nextTourStep() {
-  if (currentTourStep < tourSteps.length - 1) {
-    currentTourStep++;
-    showTourStep();
-  } else {
-    skipTour();
-  }
-}
-
-function skipTour() {
-  document.getElementById('tour-overlay').classList.remove('open');
-  localStorage.setItem('tourCompleted', 'true');
-}
-
-// Show tour on first visit
-document.addEventListener('DOMContentLoaded', () => {
-  if (!localStorage.getItem('tourCompleted')) {
-    setTimeout(startTour, 1500);
-  }
-});
-
-// ── Quick Chat (B3 #7) ──────────────────────────────────────────
-let quickChatAgent = null;
-
-function openQuickChat(agentId) {
-  const agent = agents.find(a => a.id === agentId);
-  if (!agent) return;
-  quickChatAgent = agent;
-  document.getElementById('quickchat-title').textContent = `${agent.emoji} Quick Chat: ${agent.name}`;
-  document.getElementById('quickchat-input').value = '';
-  document.getElementById('quickchat-response').style.display = 'none';
-  document.getElementById('quickchat-response').textContent = '';
-  document.getElementById('quickchat-send').disabled = false;
-  document.getElementById('quickchat-overlay').classList.add('open');
-  setTimeout(() => document.getElementById('quickchat-input').focus(), 100);
-}
-
-// Multi-Agent Broadcast (B3 #17)
-function openBroadcast() {
-  // Use pinned agents if any, otherwise prompt
-  const targets = pinnedAgents.length > 0
-    ? agents.filter(a => pinnedAgents.includes(a.id))
-    : agents.slice(0, 3); // first 3 if nothing pinned
-  if (targets.length === 0) {
-    showToast('No agents to broadcast to', 'warning');
-    return;
-  }
-  quickChatAgent = { id: '*broadcast*', name: `Broadcast to ${targets.length} agents`, emoji: '📡', targets };
-  document.getElementById('quickchat-title').textContent = `📡 Broadcast: ${targets.map(t => t.name).join(', ')}`;
-  document.getElementById('quickchat-input').value = '';
-  document.getElementById('quickchat-response').style.display = 'none';
-  document.getElementById('quickchat-response').textContent = '';
-  document.getElementById('quickchat-send').disabled = false;
-  document.getElementById('quickchat-overlay').classList.add('open');
-  setTimeout(() => document.getElementById('quickchat-input').focus(), 100);
-}
-
-function closeQuickChat() {
-  document.getElementById('quickchat-overlay').classList.remove('open');
-  quickChatAgent = null;
-}
-
-async function sendQuickChat() {
-  if (!quickChatAgent) return;
-  const prompt = document.getElementById('quickchat-input').value.trim();
-  if (!prompt) return;
-  const sendBtn = document.getElementById('quickchat-send');
-  const responseEl = document.getElementById('quickchat-response');
-  sendBtn.disabled = true;
-  sendBtn.textContent = 'Thinking...';
-  responseEl.style.display = '';
-  responseEl.textContent = 'Booting agent and waiting for response...\n(this can take 30-60 seconds for the first run)';
-
-  // Multi-agent broadcast (B3 #17): if quickChatAgent is "*broadcast*"
-  if (quickChatAgent.id === '*broadcast*') {
-    const targets = quickChatAgent.targets || [];
-    let combined = '';
-    for (const target of targets) {
-      combined += `\n=== ${target.emoji} ${target.name} ===\n`;
-      try {
-        const res = await fetch('/api/quickchat', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ agentId: target.id, prompt }),
-        });
-        const data = await res.json();
-        combined += (res.ok ? data.response : `Error: ${data.error}`) + '\n';
-      } catch (err) {
-        combined += `Network error: ${err.message}\n`;
-      }
-      responseEl.textContent = combined;
-    }
-    sendBtn.disabled = false;
-    sendBtn.textContent = 'Send';
-    return;
+    rec = { term, fit, search, ws, agentId, topic };
+    state.terminals[sessionId] = rec;
   }
 
-  try {
-    const res = await fetch('/api/quickchat', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ agentId: quickChatAgent.id, prompt }),
-    });
-    const data = await res.json();
-    if (res.ok) {
-      responseEl.textContent = data.response || '(empty response)';
-    } else {
-      responseEl.textContent = `Error: ${data.error || 'unknown'}`;
-    }
-  } catch (err) {
-    responseEl.textContent = `Network error: ${err.message}`;
-  } finally {
-    sendBtn.disabled = false;
-    sendBtn.textContent = 'Send';
-  }
+  state.activeSession = sessionId;
+  $('#crumb-agent').textContent = state.agentsById[agentId]?.name || agentId;
+  if (topic) { $('#crumb-topic').textContent = topic; $('#crumb-topic-sep').hidden = false; }
+  else { $('#crumb-topic').textContent = ''; $('#crumb-topic-sep').hidden = true; }
+  showTerminal();
+  try { rec.fit.fit(); rec.term.focus(); } catch {}
 }
 
-// ── Session Pin (B3 #10) ────────────────────────────────────────
-async function toggleSessionPin(sessionId) {
-  try {
-    const entry = terminals.get(sessionId);
-    if (!entry) return;
-    const isPinnedNow = entry.pinned;
-    const method = isPinnedNow ? 'DELETE' : 'POST';
-    await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/pin`, { method });
-    entry.pinned = !isPinnedNow;
-    showToast(isPinnedNow ? 'Session unpinned' : 'Session pinned (no idle timeout)', 'info');
-  } catch {}
-}
-
-// ── Bulk Operations (B3 #9) ─────────────────────────────────────
-async function killAllSessions(idleOnly = false) {
-  if (!confirm(idleOnly ? 'Kill all idle sessions?' : 'Kill ALL sessions?')) return;
-  try {
-    const res = await fetch('/api/sessions/kill-all', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ idleOnly }),
-    });
-    const data = await res.json();
-    showToast(`Killed ${data.killed} sessions`, 'success');
-    // Close all local terminals
-    for (const [sid, entry] of terminals) {
-      if (entry.intentionallyClosed) entry.intentionallyClosed();
-      if (entry.ws) entry.ws.close();
-      if (entry.terminal) entry.terminal.dispose();
-      removeSessionTab(sid);
-    }
-    terminals.clear();
-    updateSessionCount();
-    showDashboard();
-  } catch {
-    showToast('Bulk kill failed', 'error');
-  }
-}
-
-// ── Quick Resume Last Session (B3 #11) ──────────────────────────
-let lastClosedSession = null;
-let lastClosedAt = 0;
-
-document.addEventListener('keydown', (e) => {
-  if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'R') {
-    e.preventDefault();
-    if (lastClosedSession) {
-      launchAgent(lastClosedSession.agentId, lastClosedSession.topic);
-      showToast('Resuming last session', 'info');
-    } else {
-      showToast('No recent session to resume', 'info');
-    }
-  }
-  // Global Undo (B4 #14) — Ctrl+Z restores last killed within 30s
-  if ((e.ctrlKey || e.metaKey) && e.key === 'z' && document.activeElement.tagName !== 'INPUT' && document.activeElement.tagName !== 'TEXTAREA') {
-    if (lastClosedSession && Date.now() - lastClosedAt < 30_000) {
-      e.preventDefault();
-      launchAgent(lastClosedSession.agentId, lastClosedSession.topic);
-      showToast('Undo: session restored', 'success');
-      lastClosedSession = null;
-    }
-  }
-});
-
-// ── Topic Browser (B3 #4) ───────────────────────────────────────
-let allTopics = [];
-
-async function openTopics() {
-  document.getElementById('topics-overlay').classList.add('open');
-  try {
-    const res = await fetch('/api/topics');
-    allTopics = await res.json();
-    document.getElementById('topics-count').textContent = `${allTopics.length} TOPICS`;
-    renderTopics(allTopics);
-  } catch {
-    showToast('Failed to load topics', 'error');
-  }
-}
-
-function closeTopics() {
-  document.getElementById('topics-overlay').classList.remove('open');
-}
-
-function renderTopics(list) {
-  const container = document.getElementById('topics-list');
-  container.innerHTML = '';
-  if (list.length === 0) {
-    container.innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-muted)">No topics found</div>';
-    return;
-  }
-  for (const t of list) {
-    const agent = agents.find(a => a.id === t.agentId);
-    const card = document.createElement('div');
-    card.className = 'topic-card';
-    card.innerHTML = `
-      <span style="font-size:18px">${esc(agent?.emoji || '📂')}</span>
-      <div>
-        <div class="topic-card-name">${esc(t.name)}</div>
-        <div class="topic-card-agent">${esc(agent?.name || t.agentId)}</div>
-      </div>
-      <div class="topic-card-time">${t.lastUpdated ? new Date(t.lastUpdated).toLocaleDateString() : ''}</div>
-    `;
-    card.addEventListener('click', () => {
-      closeTopics();
-      launchAgent(t.agentId, t.name);
-    });
-    container.appendChild(card);
-  }
-}
-
-document.addEventListener('DOMContentLoaded', () => {
-  document.getElementById('topics-search')?.addEventListener('input', (e) => {
-    const q = e.target.value.toLowerCase();
-    renderTopics(allTopics.filter(t => t.name.toLowerCase().includes(q) || t.agentId.toLowerCase().includes(q)));
-  });
-});
-
-// ── Skills Catalog (B3 #5) ──────────────────────────────────────
-let allSkills = [];
-
-async function openSkills() {
-  document.getElementById('skills-overlay').classList.add('open');
-  try {
-    const res = await fetch('/api/skills');
-    allSkills = await res.json();
-    document.getElementById('skills-count').textContent = `${allSkills.length} SKILLS`;
-    renderSkills(allSkills);
-  } catch {
-    showToast('Failed to load skills', 'error');
-  }
-}
-
-function closeSkills() {
-  document.getElementById('skills-overlay').classList.remove('open');
-}
-
-function renderSkills(list) {
-  const container = document.getElementById('skills-list');
-  container.innerHTML = '';
-  if (list.length === 0) {
-    container.innerHTML = '<div style="padding:12px;font-size:11px;color:var(--text-dim)">No skills found</div>';
-    return;
-  }
-  for (const s of list) {
-    const el = document.createElement('div');
-    el.className = 'inspector-list-item';
-    el.style.justifyContent = 'space-between';
-    const nameSpan = document.createElement('span');
-    nameSpan.textContent = s.name;
-    nameSpan.style.cssText = 'flex:1;overflow:hidden;text-overflow:ellipsis';
-    el.appendChild(nameSpan);
-    el.title = s.description || '';
-    // Run button — works for both script-based and markdown-only skills
-    const runBtn = document.createElement('button');
-    runBtn.textContent = s.hasScripts ? 'Run' : 'Run as prompt';
-    runBtn.style.cssText = 'background:var(--accent-soft);border:1px solid var(--border-active);color:var(--accent);padding:2px 8px;border-radius:4px;cursor:pointer;font-size:10px;font-family:var(--font-mono);white-space:nowrap';
-    runBtn.title = s.hasScripts
-      ? 'Execute the skill\'s script'
-      : 'Send SKILL.md as a prompt template to a one-shot Claude session';
-    runBtn.addEventListener('click', (e) => { e.stopPropagation(); openSkillExec(s.id, s.name); });
-    el.appendChild(runBtn);
-    el.addEventListener('click', async () => {
-      document.querySelectorAll('#skills-list .inspector-list-item').forEach(i => i.classList.remove('active'));
-      el.classList.add('active');
-      document.getElementById('skills-current').textContent = s.name;
-      try {
-        const r = await fetch(`/api/skills/${encodeURIComponent(s.id)}`);
-        const text = await r.text();
-        document.getElementById('skills-view').textContent = text;
-      } catch {
-        document.getElementById('skills-view').textContent = '(Failed to load)';
-      }
-    });
-    container.appendChild(el);
-  }
-}
-
-document.addEventListener('DOMContentLoaded', () => {
-  document.getElementById('skills-search')?.addEventListener('input', (e) => {
-    const q = e.target.value.toLowerCase();
-    renderSkills(allSkills.filter(s =>
-      s.name.toLowerCase().includes(q) ||
-      s.id.toLowerCase().includes(q) ||
-      (s.description && s.description.toLowerCase().includes(q))
-    ));
-  });
-});
-
-// ── Activity Feed (B3 #6) ───────────────────────────────────────
-let activityWs = null;
-let activityCache = [];
-
-function toggleActivityFeed() {
-  const feed = document.getElementById('activity-feed');
-  if (feed.classList.contains('open')) {
-    feed.classList.remove('open');
-  } else {
-    feed.classList.add('open');
-    if (!activityWs) connectActivityWs();
-  }
-}
-
-function connectActivityWs() {
-  const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  try {
-    activityWs = new WebSocket(`${proto}//${window.location.host}/ws/events`);
-    activityWs.onmessage = (e) => {
-      try {
-        const event = JSON.parse(e.data);
-        if (event.type === 'activity_snapshot') {
-          activityCache = event.data;
-          renderActivity();
-        } else if (event.type === 'activity') {
-          activityCache.unshift(event.data);
-          if (activityCache.length > 100) activityCache.length = 100;
-          renderActivity();
-        }
-      } catch {}
-    };
-    activityWs.onclose = () => { activityWs = null; };
-  } catch {
-    showToast('Failed to connect to activity feed', 'error');
-  }
-}
-
-function renderActivity() {
-  const list = document.getElementById('activity-list');
-  if (!list) return;
-  if (activityCache.length === 0) {
-    list.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text-dim);font-size:12px">No activity yet</div>';
-    return;
-  }
-  list.innerHTML = '';
-  for (const e of activityCache) {
-    const div = document.createElement('div');
-    div.className = `activity-item ${esc(e.type)}`;
-    div.innerHTML = `
-      <div class="activity-msg">${esc(e.message)}</div>
-      <div class="activity-time">${new Date(e.timestamp).toLocaleTimeString()}</div>
-    `;
-    list.appendChild(div);
-  }
-}
-
-// ── Workspace Inspector (B3 #1, #2, #3) ─────────────────────────
-let inspectorAgent = null;
-let inspectorSection = 'files';
-let inspectorCurrentFile = null;
-let inspectorEditing = false;
-
-async function openInspector(agentId) {
-  const agent = agents.find(a => a.id === agentId);
-  if (!agent) return;
-  inspectorAgent = agent;
-  inspectorSection = 'files';
-  inspectorCurrentFile = null;
-  inspectorEditing = false;
-
-  document.getElementById('inspector-emoji').textContent = agent.emoji;
-  document.getElementById('inspector-name').textContent = agent.name;
-  document.querySelectorAll('.inspector-tab').forEach(t => t.classList.toggle('active', t.dataset.section === 'files'));
-  document.getElementById('inspector-overlay').classList.add('open');
-  await inspectorLoadList();
-}
-
-function closeInspector() {
-  document.getElementById('inspector-overlay').classList.remove('open');
-  inspectorAgent = null;
-}
-
-async function inspectorShowSection(section) {
-  inspectorSection = section;
-  inspectorCurrentFile = null;
-  inspectorEditing = false;
-  document.querySelectorAll('.inspector-tab').forEach(t => t.classList.toggle('active', t.dataset.section === section));
-  document.getElementById('inspector-edit-btn').style.display = 'none';
-  document.getElementById('inspector-save-btn').style.display = 'none';
-  document.getElementById('inspector-current').textContent = '';
-  document.getElementById('inspector-view').textContent = '';
-  document.getElementById('inspector-editor').style.display = 'none';
-  document.getElementById('inspector-view').style.display = '';
-  await inspectorLoadList();
-}
-
-async function inspectorLoadList() {
-  if (!inspectorAgent) return;
-  const list = document.getElementById('inspector-list');
-  list.innerHTML = '<div style="padding:12px;font-size:11px;color:var(--text-dim)">Loading...</div>';
-
-  try {
-    let items = [];
-    if (inspectorSection === 'files') {
-      const res = await fetch(`/api/agents/${encodeURIComponent(inspectorAgent.id)}/files`);
-      const files = await res.json();
-      items = files.map(f => ({ label: f, value: f, type: 'file' }));
-    } else if (inspectorSection === 'memory') {
-      const res = await fetch(`/api/agents/${encodeURIComponent(inspectorAgent.id)}/memory`);
-      const mem = await res.json();
-      items = mem.map(m => ({ label: m.date, value: m.filename, type: 'memory' }));
-    } else if (inspectorSection === 'topics') {
-      items = inspectorAgent.topics.map(t => ({ label: t, value: t, type: 'topic' }));
-    }
-
-    if (items.length === 0) {
-      list.innerHTML = `<div style="padding:12px;font-size:11px;color:var(--text-dim)">No ${inspectorSection}</div>`;
-      return;
-    }
-
-    list.innerHTML = '';
-    for (const item of items) {
-      const el = document.createElement('div');
-      el.className = 'inspector-list-item';
-      el.textContent = item.label;
-      el.addEventListener('click', () => inspectorOpenItem(item));
-      list.appendChild(el);
-    }
-    // Auto-open first
-    if (items[0]) inspectorOpenItem(items[0]);
-  } catch (err) {
-    list.innerHTML = '<div style="padding:12px;font-size:11px;color:var(--danger)">Error loading</div>';
-  }
-}
-
-async function inspectorOpenItem(item) {
-  if (!inspectorAgent) return;
-  inspectorCurrentFile = item;
-  inspectorEditing = false;
-  document.querySelectorAll('.inspector-list-item').forEach(el => el.classList.toggle('active', el.textContent === item.label));
-  document.getElementById('inspector-current').textContent = item.label;
-  document.getElementById('inspector-view').style.display = '';
-  document.getElementById('inspector-editor').style.display = 'none';
-  document.getElementById('inspector-save-btn').style.display = 'none';
-
-  try {
-    let url;
-    if (item.type === 'file') {
-      url = `/api/agents/${encodeURIComponent(inspectorAgent.id)}/files/${encodeURIComponent(item.value)}`;
-      document.getElementById('inspector-edit-btn').style.display = '';
-    } else if (item.type === 'memory') {
-      url = `/api/agents/${encodeURIComponent(inspectorAgent.id)}/memory/${encodeURIComponent(item.value)}`;
-      document.getElementById('inspector-edit-btn').style.display = 'none';
-    } else if (item.type === 'topic') {
-      url = `/api/agents/${encodeURIComponent(inspectorAgent.id)}/topics/${encodeURIComponent(item.value)}/MEMORY.md`;
-      document.getElementById('inspector-edit-btn').style.display = 'none';
-    }
-    const res = await fetch(url);
-    const text = await res.text();
-    document.getElementById('inspector-view').textContent = text;
-  } catch {
-    document.getElementById('inspector-view').textContent = '(Failed to load)';
-  }
-}
-
-function inspectorToggleEdit() {
-  if (!inspectorCurrentFile || inspectorCurrentFile.type !== 'file') return;
-  inspectorEditing = !inspectorEditing;
-  const view = document.getElementById('inspector-view');
-  const editor = document.getElementById('inspector-editor');
-  const saveBtn = document.getElementById('inspector-save-btn');
-  if (inspectorEditing) {
-    editor.value = view.textContent;
-    view.style.display = 'none';
-    editor.style.display = '';
-    saveBtn.style.display = '';
-    editor.focus();
-  } else {
-    view.style.display = '';
-    editor.style.display = 'none';
-    saveBtn.style.display = 'none';
-  }
-}
-
-async function inspectorSave() {
-  if (!inspectorCurrentFile || !inspectorAgent || inspectorCurrentFile.type !== 'file') return;
-  const editor = document.getElementById('inspector-editor');
-  try {
-    const res = await fetch(`/api/agents/${encodeURIComponent(inspectorAgent.id)}/files/${encodeURIComponent(inspectorCurrentFile.value)}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ content: editor.value }),
-    });
-    if (res.ok) {
-      showToast('Saved', 'success');
-      document.getElementById('inspector-view').textContent = editor.value;
-      inspectorToggleEdit();
-    } else {
-      showToast('Save failed', 'error');
-    }
-  } catch {
-    showToast('Save failed', 'error');
-  }
-}
-
-// Wire keyboard shortcuts for inspector
-document.addEventListener('keydown', (e) => {
-  if (!document.getElementById('inspector-overlay')?.classList.contains('open')) return;
-  if (e.key === 'Escape') { e.preventDefault(); closeInspector(); }
-  if ((e.ctrlKey || e.metaKey) && e.key === 's' && inspectorEditing) { e.preventDefault(); inspectorSave(); }
-});
-
-// ── Agent Detail Panel (#3) ─────────────────────────────────────
-function showDetailPanel(agentId) {
-  const agent = agents.find(a => a.id === agentId);
-  if (!agent) return;
-
-  document.getElementById('detail-emoji').textContent = agent.emoji;
-  document.getElementById('detail-name').textContent = agent.name;
-  document.getElementById('detail-role').textContent = agent.role;
-  document.getElementById('detail-vibe').textContent = agent.vibe || '';
-
-  const cat = getCategory(agent);
-  document.getElementById('detail-category').textContent = categoryLabels[cat] || cat || 'Uncategorized';
-
-  // Topics
-  const topicsEl = document.getElementById('detail-topics');
-  topicsEl.innerHTML = '';
-  if (agent.topics.length === 0) {
-    topicsEl.innerHTML = '<span style="color:var(--text-dim);font-size:12px">No topics</span>';
-  } else {
-    for (const t of agent.topics) {
-      const chip = document.createElement('span');
-      chip.className = 'detail-topic-chip';
-      chip.textContent = t;
-      chip.addEventListener('click', () => { closeDetailPanel(); launchAgent(agent.id, t); });
-      topicsEl.appendChild(chip);
-    }
-  }
-
-  // Launch button
-  const launchBtn = document.getElementById('detail-launch');
-  launchBtn.onclick = () => { closeDetailPanel(); launchAgent(agent.id); };
-
-  // Inspect button
-  const inspectBtn = document.getElementById('detail-inspect');
-  if (inspectBtn) inspectBtn.onclick = () => { closeDetailPanel(); openInspector(agent.id); };
-
-  // Load metrics (B4 #3)
-  loadAgentMetrics(agent.id);
-
-  document.getElementById('agent-detail').classList.add('open');
-}
-
-async function loadAgentMetrics(agentId) {
-  const container = document.getElementById('detail-metrics');
-  if (!container) return;
-  container.innerHTML = '<div style="font-size:11px;color:var(--text-dim)">Loading...</div>';
-  try {
-    const res = await fetch(`/api/agents/${encodeURIComponent(agentId)}/metrics`);
-    const m = await res.json();
-    const lastUsedStr = m.lastUsed ? new Date(m.lastUsed).toLocaleDateString() : 'never';
-    container.innerHTML = `
-      <div class="metrics-row"><strong>${m.totalSessions}</strong> total sessions</div>
-      <div class="metrics-row">Last used: <strong>${lastUsedStr}</strong></div>
-      <div class="metrics-spark">
-        ${m.recentDates.map(d => `<div class="metrics-spark-bar ${d ? 'active' : ''}" title="${d || 'no activity'}"></div>`).join('')}
-      </div>
-    `;
-  } catch {
-    container.innerHTML = '<div style="font-size:11px;color:var(--text-dim)">Unable to load</div>';
-  }
-}
-
-function closeDetailPanel() {
-  document.getElementById('agent-detail').classList.remove('open');
-}
-
-// ── Recent Sessions (#8) ────────────────────────────────────────
-async function loadRecentSessions() {
-  try {
-    const res = await fetch('/api/history');
-    const history = await res.json();
-    const recent = history.slice(0, 5);
-    const container = document.getElementById('recent-sessions');
-    const list = document.getElementById('recent-sessions-list');
-
-    if (recent.length === 0) {
-      container.style.display = 'none';
-      return;
-    }
-
-    container.style.display = '';
-    list.innerHTML = '';
-    for (const h of recent) {
-      const agent = agents.find(a => a.id === h.agentId);
-      const item = document.createElement('div');
-      item.className = 'recent-item';
-      item.innerHTML = `
-        <span class="recent-emoji">${esc(agent?.emoji || '🤖')}</span>
-        <span>${esc(agent?.name || h.agentId)}${h.topic ? ': ' + esc(h.topic) : ''}</span>
-        <span class="recent-time">${esc(h.date.slice(0, 10))}</span>
-      `;
-      item.addEventListener('click', () => launchAgent(h.agentId, h.topic));
-      list.appendChild(item);
-    }
-  } catch {
-    // Silently fail
-  }
-}
-
-// ── Navigation ─────────────────────────────────────────────────
-function showDashboard() {
-  if (currentSessionId) {
-    const entry = terminals.get(currentSessionId);
-    if (entry) entry.resizeObserver.disconnect();
-  }
-
-  document.getElementById('terminal-view').classList.remove('active');
-  document.getElementById('dashboard-view').classList.add('active');
-  currentSessionId = null;
-  closeDetailPanel();
-
-  document.querySelectorAll('.session-tab').forEach(tab => tab.classList.remove('active'));
-  loadAgents();
-  loadRecentSessions();
-}
-
-// ── Close Session ──────────────────────────────────────────────
-async function closeSession(sessionId) {
-  const entry = terminals.get(sessionId);
-  if (entry) {
-    // Track for quick resume (B3 #11) and undo (B4 #14)
-    lastClosedSession = { agentId: entry.agent.id, topic: entry.topic };
-    lastClosedAt = Date.now();
-
-    if (entry.intentionallyClosed) entry.intentionallyClosed();
-    if (entry.clearReconnect) entry.clearReconnect();
-    entry.ws.close();
-    entry.terminal.dispose();
-    entry.resizeObserver.disconnect();
-    terminals.delete(sessionId);
-    // Remove the persistent terminal wrapper
-    const container = document.getElementById('terminal-container');
-    const wrapper = container?.querySelector(`[data-terminal="${CSS.escape(sessionId)}"]`);
-    if (wrapper) wrapper.remove();
-  }
-
-  await fetch(`/api/sessions/${encodeURIComponent(sessionId)}`, { method: 'DELETE' });
-  removeSessionTab(sessionId);
-  updateSessionCount();
-  showToast(`Session ended`, 'info');
-
-  if (currentSessionId === sessionId) {
-    const remaining = [...terminals.keys()];
-    if (remaining.length > 0) {
-      switchToSession(remaining[0]);
-    } else {
-      showDashboard();
-    }
-  }
-  loadAgents();
-}
-
-function killCurrentSession() {
-  if (currentSessionId) closeSession(currentSessionId);
-}
-
-// ── Session Counter ────────────────────────────────────────────
-function updateSessionCount() {
-  document.getElementById('session-count').textContent = terminals.size;
-  updateFaviconBadge(terminals.size);
-}
-
-// ── Toast Notifications (#2) ────────────────────────────────────
-function showToast(message, type = 'info') {
-  const container = document.getElementById('toast-container');
-  const toast = document.createElement('div');
-  toast.className = `toast toast-${type}`;
-  toast.textContent = message;
-  container.appendChild(toast);
-  setTimeout(() => {
-    toast.classList.add('toast-out');
-    setTimeout(() => toast.remove(), 300);
-  }, 4000);
-}
-
-// ── Context Menu (#20) ──────────────────────────────────────────
-let activeContextMenu = null;
-
-function showContextMenu(x, y, agentId) {
-  closeContextMenu();
-  const agent = agents.find(a => a.id === agentId);
-  if (!agent) return;
-
-  const menu = document.createElement('div');
-  menu.className = 'context-menu';
-  menu.style.left = Math.min(x, window.innerWidth - 200) + 'px';
-  menu.style.top = Math.min(y, window.innerHeight - 200) + 'px';
-
-  // SVG icon helper for context menu
-  const svgIcon = (d) => `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">${d}</svg>`;
-
-  const items = [
-    { icon: svgIcon('<path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>'), label: 'Quick Chat...', action: () => openQuickChat(agentId) },
-    { icon: svgIcon('<polygon points="5 3 19 12 5 21 5 3"/>'), label: 'Launch Session', action: () => launchAgent(agentId) },
-    { icon: svgIcon('<path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/>'), label: 'Launch with Prompt...', action: () => showPromptLaunchModal(agentId) },
-  ];
-
-  if (agent.topics.length > 0) {
-    items.push({ icon: svgIcon('<path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/>'), label: 'Launch with Topic...', action: () => showTopicModal(agent) });
-  }
-
-  items.push(
-    { icon: svgIcon('<circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/>'), label: 'View Details', action: () => showDetailPanel(agentId) },
-    { icon: svgIcon('<path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/>'), label: 'Inspect Workspace', action: () => openInspector(agentId) },
-    { icon: svgIcon(isPinned(agentId) ? '<polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>' : '<polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>'), label: isPinned(agentId) ? 'Unpin' : 'Pin to Top', action: () => togglePin(agentId) },
-    { sep: true },
-    { icon: svgIcon('<rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>'), label: 'Copy workspace path', action: () => { navigator.clipboard?.writeText(`cd ~/clawd-${agentId}`); showToast('Path copied', 'info'); } },
-  );
-
-  for (const item of items) {
-    if (item.sep) {
-      const sep = document.createElement('div');
-      sep.className = 'context-sep';
-      menu.appendChild(sep);
-      continue;
-    }
-    const btn = document.createElement('button');
-    btn.className = 'context-item';
-    btn.innerHTML = `<span class="context-icon">${item.icon}</span>${esc(item.label)}`;
-    btn.addEventListener('click', () => { closeContextMenu(); item.action(); });
-    menu.appendChild(btn);
-  }
-
-  document.body.appendChild(menu);
-  activeContextMenu = menu;
-}
-
-function closeContextMenu() {
-  if (activeContextMenu) {
-    activeContextMenu.remove();
-    activeContextMenu = null;
-  }
-}
-
-// Wire context menu to agent grid
-document.addEventListener('DOMContentLoaded', () => {
-  document.getElementById('agent-grid')?.addEventListener('contextmenu', (e) => {
-    const card = e.target.closest('.agent-card[data-agent]');
-    if (card) {
-      e.preventDefault();
-      showContextMenu(e.clientX, e.clientY, card.dataset.agent);
-    }
-  });
-
-  document.addEventListener('click', closeContextMenu);
-  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeContextMenu(); });
-});
-
-// ── Favicon Badge (#19) ─────────────────────────────────────────
-function updateFaviconBadge(count) {
-  const link = document.querySelector('link[rel="icon"]');
-  if (!link) return;
-  if (count === 0) {
-    link.href = '/favicon.svg';
-    return;
-  }
-  const canvas = document.createElement('canvas');
-  canvas.width = 64;
-  canvas.height = 64;
-  const ctx = canvas.getContext('2d');
-  // Draw base icon
-  ctx.fillStyle = '#050509';
-  ctx.beginPath();
-  ctx.arc(32, 32, 30, 0, Math.PI * 2);
-  ctx.fill();
-  const grad = ctx.createLinearGradient(0, 0, 64, 64);
-  grad.addColorStop(0, '#818cf8');
-  grad.addColorStop(1, '#38bdf8');
-  ctx.strokeStyle = grad;
-  ctx.lineWidth = 1.5;
-  ctx.stroke();
-  // Draw badge
-  ctx.fillStyle = '#34d399';
-  ctx.beginPath();
-  ctx.arc(52, 12, 12, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.fillStyle = '#000';
-  ctx.font = 'bold 14px sans-serif';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(String(count), 52, 13);
-  link.href = canvas.toDataURL();
-}
-
-// ── Export Session (#11) ────────────────────────────────────────
-function exportSession() {
-  const entry = terminals.get(currentSessionId);
-  if (!entry) return;
-  const text = `# Session Export\n\n` +
-    `**Agent:** ${entry.agent.emoji} ${entry.agent.name}\n` +
-    `**Topic:** ${entry.topic || 'general'}\n` +
-    `**Date:** ${new Date().toISOString()}\n\n---\n\n` +
-    entry.terminal.buffer.active.getLine(0) ? (() => {
-      let out = '';
-      const buf = entry.terminal.buffer.active;
-      for (let i = 0; i < buf.length; i++) {
-        const line = buf.getLine(i);
-        if (line) out += line.translateToString(true) + '\n';
-      }
-      return '```\n' + out + '```\n';
-    })() : '(empty)\n';
-
-  const blob = new Blob([text], { type: 'text/markdown' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `session-${entry.agent.id}${entry.topic ? '-' + entry.topic : ''}-${new Date().toISOString().slice(0,10)}.md`;
-  a.click();
-  URL.revokeObjectURL(url);
-  showToast('Session exported', 'success');
-}
-
-// ── Terminal Search (#13) ───────────────────────────────────────
 function toggleTerminalSearch() {
-  const bar = document.getElementById('terminal-search-bar');
-  if (bar.style.display === 'none') {
-    bar.style.display = '';
-    document.getElementById('terminal-search-input').focus();
-  } else {
-    closeTerminalSearch();
-  }
+  const bar = $('#term-search-bar');
+  bar.hidden = !bar.hidden;
+  if (!bar.hidden) $('#term-search-input').focus();
 }
-
-function closeTerminalSearch() {
-  document.getElementById('terminal-search-bar').style.display = 'none';
-  document.getElementById('terminal-search-input').value = '';
-  const entry = terminals.get(currentSessionId);
-  if (entry?.searchAddon) entry.searchAddon.clearDecorations();
-}
+window.toggleTerminalSearch = toggleTerminalSearch;
+function closeTerminalSearch() { $('#term-search-bar').hidden = true; }
+window.closeTerminalSearch = closeTerminalSearch;
 
 function termSearchNext() {
-  const entry = terminals.get(currentSessionId);
-  const q = document.getElementById('terminal-search-input').value;
-  if (entry?.searchAddon && q) entry.searchAddon.findNext(q);
+  const rec = state.terminals[state.activeSession]; if (!rec) return;
+  const q = $('#term-search-input').value; if (q) rec.search.findNext(q);
 }
-
 function termSearchPrev() {
-  const entry = terminals.get(currentSessionId);
-  const q = document.getElementById('terminal-search-input').value;
-  if (entry?.searchAddon && q) entry.searchAddon.findPrevious(q);
+  const rec = state.terminals[state.activeSession]; if (!rec) return;
+  const q = $('#term-search-input').value; if (q) rec.search.findPrevious(q);
 }
+window.termSearchNext = termSearchNext; window.termSearchPrev = termSearchPrev;
 
-// Wire Ctrl+F to terminal search
-document.addEventListener('keydown', (e) => {
-  if ((e.ctrlKey || e.metaKey) && e.key === 'f' && currentSessionId) {
-    e.preventDefault();
-    toggleTerminalSearch();
-  }
-});
-
-// Wire Enter/Shift+Enter in search input
-document.addEventListener('DOMContentLoaded', () => {
-  document.getElementById('terminal-search-input')?.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') { e.preventDefault(); e.shiftKey ? termSearchPrev() : termSearchNext(); }
-    if (e.key === 'Escape') closeTerminalSearch();
-  });
-  document.getElementById('terminal-search-input')?.addEventListener('input', (e) => {
-    termSearchNext(); // Live search as you type
-  });
-});
-
-// ── Auto-Scroll Toggle (#17) ───────────────────────────────────
-function toggleAutoScroll() {
-  const entry = terminals.get(currentSessionId);
-  if (!entry) return;
-  entry.autoScroll = !entry.autoScroll;
-  const btn = document.getElementById('autoscroll-btn');
-  if (btn) btn.classList.toggle('active', entry.autoScroll);
-  showToast(entry.autoScroll ? 'Auto-scroll on' : 'Auto-scroll paused', 'info');
+function exportSession() {
+  if (!state.activeSession) return;
+  const rec = state.terminals[state.activeSession]; if (!rec) return;
+  let out = ''; const buf = rec.term.buffer.active;
+  for (let i = 0; i < buf.length; i++) out += buf.getLine(i).translateToString(true) + '\n';
+  const blob = new Blob([out], { type: 'text/plain' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = `session_${rec.agentId}_${Date.now()}.txt`; a.click();
 }
+window.exportSession = exportSession;
 
-// ── Browser Notifications (#14) ────────────────────────────────
-let notificationsEnabled = localStorage.getItem('notifications') === 'true';
-
-function requestNotifications() {
-  if ('Notification' in window && Notification.permission === 'default') {
-    Notification.requestPermission();
-  }
-}
-
-function sendNotification(title, body) {
-  if (!notificationsEnabled) return;
-  if (document.hasFocus()) return; // Don't notify if tab is focused
-  if ('Notification' in window && Notification.permission === 'granted') {
-    new Notification(title, { body, icon: '/favicon.svg' });
-  }
-}
-
-// Request permission on first interaction
-document.addEventListener('click', () => requestNotifications(), { once: true });
-
-// ── Project Workspaces (B4 #15) ─────────────────────────────────
-function getProjects() {
-  try { return JSON.parse(localStorage.getItem('projects') || '{}'); }
-  catch { return {}; }
-}
-
-function saveProject(name) {
-  if (!name) return;
-  const projects = getProjects();
-  projects[name] = {
-    pinnedAgents: [...pinnedAgents],
-    filter: currentFilter,
-    sort: currentSort,
-    viewMode,
-    theme: currentTheme,
-    savedAt: new Date().toISOString(),
-  };
-  localStorage.setItem('projects', JSON.stringify(projects));
-  showToast(`Project "${name}" saved`, 'success');
-}
-
-function loadProject(name) {
-  const projects = getProjects();
-  const p = projects[name];
-  if (!p) return;
-  pinnedAgents = p.pinnedAgents || [];
-  localStorage.setItem('pinnedAgents', JSON.stringify(pinnedAgents));
-  currentFilter = p.filter || 'all';
-  currentSort = p.sort || 'name';
-  if (p.viewMode && p.viewMode !== viewMode) toggleViewMode();
-  if (p.theme) applyTheme(p.theme);
-  loadAgents();
-  showToast(`Loaded project: ${name}`, 'info');
-}
-
-function promptSaveProject() {
-  const name = prompt('Project name:');
-  if (name) saveProject(name);
-}
-
-function promptLoadProject() {
-  const projects = getProjects();
-  const names = Object.keys(projects);
-  if (names.length === 0) { showToast('No saved projects', 'info'); return; }
-  const name = prompt(`Load project (${names.join(', ')}):`);
-  if (name) loadProject(name);
-}
-
-// ── Theme System (#9) ───────────────────────────────────────────
-const themes = ['midnight', 'ocean', 'obsidian'];
-let currentTheme = localStorage.getItem('theme') || 'midnight';
-
-function applyTheme(theme) {
-  if (theme === 'midnight') {
-    document.documentElement.removeAttribute('data-theme');
-  } else {
-    document.documentElement.setAttribute('data-theme', theme);
-  }
-  currentTheme = theme;
-  localStorage.setItem('theme', theme);
-}
-
-function cycleTheme() {
-  const idx = themes.indexOf(currentTheme);
-  const next = themes[(idx + 1) % themes.length];
-  applyTheme(next);
-  showToast(`Theme: ${next}`, 'info');
-}
-
-// Apply saved theme on load
-applyTheme(currentTheme);
-
-// ── Agent Sorting (#19) ─────────────────────────────────────────
-function changeSort(sortBy) {
-  currentSort = sortBy;
-  localStorage.setItem('agentSort', sortBy);
-  renderAgentGrid(agents);
-}
-
-// ── PWA Install (#20) ───────────────────────────────────────────
-let deferredInstallPrompt = null;
-window.addEventListener('beforeinstallprompt', (e) => {
-  e.preventDefault();
-  deferredInstallPrompt = e;
-  // Show install button in header
-  const btn = document.createElement('button');
-  btn.className = 'icon-btn';
-  btn.title = 'Install App';
-  btn.textContent = '📲';
-  btn.addEventListener('click', async () => {
-    if (deferredInstallPrompt) {
-      deferredInstallPrompt.prompt();
-      const result = await deferredInstallPrompt.userChoice;
-      if (result.outcome === 'accepted') showToast('App installed!', 'success');
-      deferredInstallPrompt = null;
-      btn.remove();
-    }
-  });
-  document.querySelector('.header-controls')?.prepend(btn);
-});
-
-// ── View Mode Toggle (#10) ──────────────────────────────────────
-function toggleViewMode() {
-  viewMode = viewMode === 'grid' ? 'compact' : 'grid';
-  localStorage.setItem('viewMode', viewMode);
-  const grid = document.getElementById('agent-grid');
-  grid.classList.toggle('compact', viewMode === 'compact');
-  const btn = document.getElementById('view-toggle');
-  if (btn) btn.classList.toggle('active', viewMode === 'compact');
-}
-
-// Apply saved view mode on load
-document.addEventListener('DOMContentLoaded', () => {
-  if (viewMode === 'compact') {
-    document.getElementById('agent-grid')?.classList.add('compact');
-    document.getElementById('view-toggle')?.classList.add('active');
-  }
-});
-
-// ── Pin/Favorite Agents (#2) ────────────────────────────────────
-function togglePin(agentId) {
-  const idx = pinnedAgents.indexOf(agentId);
-  if (idx >= 0) {
-    pinnedAgents.splice(idx, 1);
-    showToast('Unpinned', 'info');
-  } else {
-    pinnedAgents.push(agentId);
-    showToast('Pinned to top', 'success');
-  }
-  localStorage.setItem('pinnedAgents', JSON.stringify(pinnedAgents));
-  renderAgentGrid(agents);
-}
-
-function isPinned(agentId) {
-  return pinnedAgents.includes(agentId);
-}
-
-// ── Dynamic Filter Chips (#6) ───────────────────────────────────
-function buildDynamicChips() {
-  const chipBar = document.getElementById('filter-chips');
-  if (!chipBar) return;
-
-  // Collect unique categories from agents
-  const cats = new Set();
-  for (const a of agents) {
-    cats.add(getCategory(a));
-  }
-
-  chipBar.innerHTML = '';
-
-  // Static chips first
-  const staticChips = [
-    { filter: 'all', label: 'All' },
-    { filter: 'pinned', label: '⭐ Pinned' },
-    { filter: 'active', label: 'Active' },
-  ];
-
-  for (const c of staticChips) {
-    const btn = document.createElement('button');
-    btn.className = `chip${currentFilter === c.filter ? ' active' : ''}`;
-    btn.dataset.filter = c.filter;
-    btn.textContent = c.label;
-    btn.addEventListener('click', () => {
-      document.querySelectorAll('.chip').forEach(ch => ch.classList.remove('active'));
-      btn.classList.add('active');
-      currentFilter = c.filter;
-      renderAgentGrid(agents);
-    });
-    chipBar.appendChild(btn);
-  }
-
-  // Dynamic category chips
-  for (const cat of categoryOrder) {
-    if (!cats.has(cat)) continue;
-    const btn = document.createElement('button');
-    btn.className = `chip${currentFilter === cat ? ' active' : ''}`;
-    btn.dataset.filter = cat;
-    btn.textContent = categoryLabels[cat] || cat;
-    btn.addEventListener('click', () => {
-      document.querySelectorAll('.chip').forEach(ch => ch.classList.remove('active'));
-      btn.classList.add('active');
-      currentFilter = cat;
-      renderAgentGrid(agents);
-    });
-    chipBar.appendChild(btn);
-  }
-}
-
-// ── Stats Bar (#3) ──────────────────────────────────────────────
-async function updateStatsBar() {
+async function shareCurrentSession() {
+  if (!state.activeSession) return;
+  const rec = state.terminals[state.activeSession];
+  let out = ''; const buf = rec.term.buffer.active;
+  for (let i = 0; i < buf.length; i++) out += buf.getLine(i).translateToString(true) + '\n';
   try {
-    const res = await fetch('/api/health');
-    const stats = await res.json();
-    const bar = document.getElementById('stats-bar');
-    if (!bar) return;
-    bar.style.display = '';
-    const upH = Math.floor(stats.uptime / 3600);
-    const upM = Math.floor((stats.uptime % 3600) / 60);
-    bar.innerHTML = `
-      <span class="stat-item">${stats.agentCount} agents</span>
-      <span class="stat-sep">·</span>
-      <span class="stat-item">${stats.activeSessions}/${stats.maxSessions} sessions</span>
-      <span class="stat-sep">·</span>
-      <span class="stat-item">${stats.memoryMB}MB</span>
-      <span class="stat-sep">·</span>
-      <span class="stat-item">up ${upH}h${upM}m</span>
-      ${stats.activeSessions > 0 ? `<span class="stat-sep">·</span><span class="stat-item" style="cursor:pointer;color:var(--warning)" onclick="killAllSessions(true)" title="Kill idle sessions">kill idle</span><span class="stat-sep">·</span><span class="stat-item" style="cursor:pointer;color:var(--danger)" onclick="killAllSessions(false)" title="Kill all sessions">kill all</span>` : ''}
-    `;
-  } catch {}
+    const r = await api('/api/share', { method:'POST', body: { agentId: rec.agentId, topic: rec.topic, content: out } });
+    const full = `${location.origin}${r.url}`;
+    try { await navigator.clipboard.writeText(full); } catch {}
+    toast(`Share link copied: ${full}`, 'ok');
+  } catch (e) { toast(`Share failed: ${e.message}`, 'err'); }
+}
+window.shareCurrentSession = shareCurrentSession;
+
+function renderSessionTabs() {
+  const wrap = $('#session-tabs'); if (!wrap) return;
+  const alive = state.sessions.filter(s => s.alive);
+  if (alive.length === 0) { wrap.innerHTML=''; wrap.classList.remove('has-tabs'); return; }
+  wrap.classList.add('has-tabs');
+  wrap.innerHTML = alive.map(s => {
+    const a = state.agentsById[s.agentId];
+    const color = a?.color || '#ffb347';
+    const active = s.id === state.activeSession ? 'active' : '';
+    return `<button class="stab ${active}" style="--cell-color:${color}" onclick="switchToSession('${esc(s.id)}')" title="${esc(a?.name || s.agentId)}${s.topic ? ' · '+esc(s.topic):''}">
+      <span class="stab-emoji">${esc(a?.emoji || '✦')}</span>
+      <span class="stab-name">${esc(a?.name || s.agentId)}${s.topic ? `<em>/${esc(s.topic)}</em>` : ''}</span>
+      <span class="stab-x" onclick="event.stopPropagation();closeSessionTab('${esc(s.id)}')">×</span>
+    </button>`;
+  }).join('');
 }
 
-// ── Launch with Prompt (#5) ─────────────────────────────────────
-function showPromptLaunchModal(agentId, topic) {
-  const agent = agents.find(a => a.id === agentId);
-  if (!agent) return;
+function switchToSession(id) {
+  const s = state.sessions.find(x => x.id === id); if (!s) return;
+  openTerminal(id, s.agentId, s.topic); renderSessionTabs();
+}
+window.switchToSession = switchToSession;
 
-  const modal = document.getElementById('topic-modal');
-  const title = document.getElementById('topic-modal-title');
-  const list = document.getElementById('topic-list');
+async function closeSessionTab(id) {
+  try { await api(`/api/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' }); } catch {}
+  const rec = state.terminals[id];
+  if (rec) { try { rec.ws.close(); } catch {} try { rec.term.dispose(); } catch {} }
+  delete state.terminals[id];
+  if (state.activeSession === id) state.activeSession = null;
+  await loadSessions(); renderSessionTabs();
+  if (!state.activeSession) showHive();
+}
+window.closeSessionTab = closeSessionTab;
 
-  title.textContent = `${agent.emoji} ${agent.name}${topic ? ': ' + topic : ''}`;
-  list.innerHTML = '';
+/* ═══════════════════════════════════════════════════════════════════
+ * 🌊 #3 — SWARM DISPATCH
+ * ═══════════════════════════════════════════════════════════════════ */
+function openSwarm() {
+  const wrap = $('#swarm-targets');
+  wrap.innerHTML = state.agents.map(a => `
+    <label class="swarm-pill" style="--cell-color:${esc(a.color || '#ffb347')}">
+      <input type="checkbox" value="${esc(a.id)}">
+      <span>${esc(a.emoji || '✦')} ${esc(a.name || a.id)}</span>
+    </label>
+  `).join('');
+  $('#swarm-overlay').classList.add('open');
+  $('#swarm-prompt').value = '';
+  $('#swarm-track').innerHTML = '';
+  updateSwarmCount();
+  wrap.onchange = updateSwarmCount;
+  $('#swarm-prompt').oninput = updateSwarmCount;
+}
+window.openSwarm = openSwarm;
+function closeSwarm() { $('#swarm-overlay').classList.remove('open'); }
+window.closeSwarm = closeSwarm;
 
-  const wrapper = document.createElement('div');
-  wrapper.style.cssText = 'display:flex;flex-direction:column;gap:8px';
+function swarmToggleAll() {
+  const boxes = $$('#swarm-targets input[type=checkbox]');
+  const allOn = boxes.every(b => b.checked);
+  boxes.forEach(b => b.checked = !allOn);
+  updateSwarmCount();
+}
+window.swarmToggleAll = swarmToggleAll;
 
-  const label = document.createElement('p');
-  label.className = 'modal-subtitle';
-  label.textContent = 'Optional: send a starting prompt';
-  wrapper.appendChild(label);
+function updateSwarmCount() {
+  const n = $$('#swarm-targets input:checked').length;
+  const chars = ($('#swarm-prompt').value || '').length;
+  $('#swarm-count').textContent = `${n} targets · ${chars} chars`;
+}
 
-  const textarea = document.createElement('textarea');
-  textarea.className = 'prompt-textarea';
-  textarea.placeholder = 'e.g. "Review the latest PR" or leave empty for general session';
-  textarea.rows = 3;
-  wrapper.appendChild(textarea);
+async function swarmCast() {
+  const targets = $$('#swarm-targets input:checked').map(b => b.value);
+  const prompt = $('#swarm-prompt').value.trim();
+  if (!targets.length || !prompt) { toast('Pick targets and type a prompt', 'err'); return; }
+  const track = $('#swarm-track');
+  track.innerHTML = targets.map(id => {
+    const a = state.agentsById[id] || { name: id, emoji: '✦', color: '#ffb347' };
+    return `<div class="lane" data-agent="${esc(id)}" style="--cell-color:${esc(a.color)}">
+      <header><span>${esc(a.emoji)}</span><b>${esc(a.name)}</b><span class="lane-status">casting…</span></header>
+      <pre class="lane-body"></pre>
+    </div>`;
+  }).join('');
 
-  const launchBtn = document.createElement('button');
-  launchBtn.className = 'detail-launch-btn';
-  launchBtn.textContent = 'Launch';
-  launchBtn.addEventListener('click', () => {
-    modal.classList.remove('open');
-    launchAgent(agentId, topic, textarea.value.trim() || undefined);
+  await Promise.all(targets.map(async id => {
+    const lane = document.querySelector(`.lane[data-agent="${CSS.escape(id)}"]`);
+    const body = lane.querySelector('.lane-body');
+    const status = lane.querySelector('.lane-status');
+    try {
+      const r = await api('/api/quickchat', { method:'POST', body: { agentId: id, prompt } });
+      body.textContent = r.response || '(no response)';
+      status.textContent = 'done'; lane.classList.add('done');
+    } catch (e) {
+      body.textContent = `Error: ${e.message}`;
+      status.textContent = 'err'; lane.classList.add('err');
+    }
+  }));
+  toast(`Swarm complete (${targets.length})`, 'ok');
+}
+window.swarmCast = swarmCast;
+
+/* ═══════════════════════════════════════════════════════════════════
+ * ⏳ #4 — TIME RIVER
+ * ═══════════════════════════════════════════════════════════════════ */
+function toggleTimeRiver() {
+  const r = $('#time-river'); const open = r.hasAttribute('hidden');
+  if (open) { r.removeAttribute('hidden'); state.timeRiverOpen = true; drawTimeRiver(); }
+  else { r.setAttribute('hidden',''); state.timeRiverOpen = false; }
+}
+window.toggleTimeRiver = toggleTimeRiver;
+
+function drawTimeRiver() {
+  const canvas = $('#time-river-canvas'); if (!canvas) return;
+  const w = canvas.width = canvas.clientWidth * devicePixelRatio;
+  const h = canvas.height = canvas.clientHeight * devicePixelRatio;
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, w, h);
+
+  const span = 24 * 3600 * 1000;
+  const start = now() - span;
+  const events = state.activity.filter(e => (e.timestamp || 0) > start);
+
+  const grad = ctx.createLinearGradient(0, 0, w, 0);
+  grad.addColorStop(0, 'rgba(255,179,71,0.06)');
+  grad.addColorStop(0.5, 'rgba(255,179,71,0.16)');
+  grad.addColorStop(1, 'rgba(255,179,71,0.04)');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, h*0.35, w, h*0.3);
+
+  events.forEach(ev => {
+    const x = ((ev.timestamp - start) / span) * w;
+    const y = h * (0.5 + Math.sin(ev.timestamp/1e6)*0.15);
+    const a = state.agentsById[ev.agentId];
+    const color = a?.color || '#ffb347';
+    const r = (ev.type === 'session_started' || ev.type === 'session_ended') ? 5 : 3;
+    ctx.beginPath();
+    ctx.arc(x, y, r * devicePixelRatio, 0, Math.PI*2);
+    ctx.fillStyle = color; ctx.globalAlpha = 0.85; ctx.fill(); ctx.globalAlpha = 1;
   });
-  wrapper.appendChild(launchBtn);
 
-  list.appendChild(wrapper);
-  modal.classList.add('open');
-  setTimeout(() => textarea.focus(), 100);
+  ctx.strokeStyle = 'rgba(255,179,71,0.6)';
+  ctx.lineWidth = 1.2 * devicePixelRatio;
+  ctx.beginPath(); ctx.moveTo(w-2, 0); ctx.lineTo(w-2, h); ctx.stroke();
 }
+window.addEventListener('resize', () => { if (state.timeRiverOpen) drawTimeRiver(); });
+
+/* ═══════════════════════════════════════════════════════════════════
+ * 🧘 #5 — FOCUS CHAMBER
+ * ═══════════════════════════════════════════════════════════════════ */
+function toggleFocusMode() {
+  state.focusMode = !state.focusMode;
+  document.body.classList.toggle('focus-mode', state.focusMode);
+  const hud = $('#focus-hud');
+  if (state.focusMode && state.activeSession) {
+    const rec = state.terminals[state.activeSession];
+    const a = state.agentsById[rec?.agentId];
+    if (a) {
+      $('#focus-emoji').textContent = a.emoji || '✦';
+      $('#focus-name').textContent = a.name || a.id;
+      document.documentElement.style.setProperty('--aura-color', a.color || '#ffb347');
+    }
+    hud.hidden = false;
+    setTimeout(() => { try { rec?.fit?.fit(); } catch {} }, 320);
+  } else {
+    hud.hidden = true;
+    setTimeout(() => { const rec = state.terminals[state.activeSession]; try { rec?.fit?.fit(); } catch {} }, 320);
+  }
+}
+window.toggleFocusMode = toggleFocusMode;
+
+/* ═══════════════════════════════════════════════════════════════════
+ * 🌱 #8 — MEMORY GARDEN
+ * ═══════════════════════════════════════════════════════════════════ */
+function openMemoryGarden(agentId) {
+  const ov = $('#garden-overlay'); ov.classList.add('open');
+  const sel = $('#garden-agent-select');
+  sel.innerHTML = state.agents.map(a => `<option value="${esc(a.id)}">${esc(a.emoji||'✦')} ${esc(a.name||a.id)}</option>`).join('');
+  const pick = agentId || state.activeAgent?.id || state.agents[0]?.id;
+  if (pick) { sel.value = pick; loadGarden(pick); }
+}
+window.openMemoryGarden = openMemoryGarden;
+function closeMemoryGarden() { $('#garden-overlay').classList.remove('open'); cancelAnimationFrame(gardenRAF); }
+window.closeMemoryGarden = closeMemoryGarden;
+
+async function loadGarden(agentId) {
+  $('#garden-agent-name').textContent = state.agentsById[agentId]?.name || agentId;
+  let files = [];
+  try { files = await api(`/api/agents/${encodeURIComponent(agentId)}/memory`); } catch {}
+  if (!Array.isArray(files)) files = [];
+  const orbs = files.map((f, i) => ({
+    id: f.name || f.filename || `orb_${i}`,
+    name: f.name || f.filename || `mem ${i}`,
+    size: Math.min(60, 14 + (f.size ? Math.log(f.size) * 3 : 14)),
+    age: f.mtime ? (now() - new Date(f.mtime).getTime()) : i * 86400000,
+    x: Math.random(), y: Math.random(),
+    vx: (Math.random()-0.5)*0.15, vy: (Math.random()-0.5)*0.15,
+    color: state.agentsById[agentId]?.color || '#ffb347',
+  }));
+  state.gardenOrbs = orbs;
+  runGarden(agentId);
+}
+window.loadGarden = loadGarden;
+
+let gardenRAF = null;
+function runGarden(agentId) {
+  const canvas = $('#garden-canvas'); const wrap = $('#garden-canvas-wrap');
+  if (!canvas || !wrap) return;
+  const ctx = canvas.getContext('2d');
+  cancelAnimationFrame(gardenRAF);
+
+  let dragOrb = null;
+  canvas.onmousedown = (e) => {
+    const rect = canvas.getBoundingClientRect();
+    const mx = (e.clientX - rect.left) / rect.width;
+    const my = (e.clientY - rect.top) / rect.height;
+    dragOrb = state.gardenOrbs.find(o => {
+      const dx = (o.x - mx) * rect.width; const dy = (o.y - my) * rect.height;
+      return Math.hypot(dx, dy) < o.size;
+    });
+    if (dragOrb) showOrbDetails(agentId, dragOrb);
+  };
+  canvas.onmousemove = (e) => {
+    if (!dragOrb) return;
+    const rect = canvas.getBoundingClientRect();
+    dragOrb.x = clamp((e.clientX - rect.left) / rect.width, 0, 1);
+    dragOrb.y = clamp((e.clientY - rect.top) / rect.height, 0, 1);
+    dragOrb.vx = dragOrb.vy = 0;
+  };
+  canvas.onmouseup = () => { dragOrb = null; };
+
+  function tick() {
+    canvas.width = wrap.clientWidth * devicePixelRatio;
+    canvas.height = wrap.clientHeight * devicePixelRatio;
+    const W = canvas.width, H = canvas.height;
+    ctx.clearRect(0, 0, W, H);
+    state.gardenOrbs.forEach(o => {
+      o.x += o.vx * 0.005; o.y += o.vy * 0.005;
+      if (o.x < 0 || o.x > 1) o.vx *= -1;
+      if (o.y < 0 || o.y > 1) o.vy *= -1;
+      o.x = clamp(o.x,0,1); o.y = clamp(o.y,0,1);
+      const dimAge = Math.min(1, o.age / (30 * 86400000));
+      const alpha = 0.9 - dimAge * 0.65;
+      const px = o.x * W; const py = o.y * H; const r = o.size * devicePixelRatio;
+      const g = ctx.createRadialGradient(px, py, 0, px, py, r*2);
+      g.addColorStop(0, rgba(o.color, alpha));
+      g.addColorStop(0.5, rgba(o.color, alpha * 0.35));
+      g.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = g;
+      ctx.beginPath(); ctx.arc(px, py, r*2, 0, Math.PI*2); ctx.fill();
+      ctx.fillStyle = rgba(o.color, alpha);
+      ctx.beginPath(); ctx.arc(px, py, r*0.45, 0, Math.PI*2); ctx.fill();
+      ctx.fillStyle = `rgba(244,230,204,${alpha*0.9})`;
+      ctx.font = `${11 * devicePixelRatio}px Manrope, sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.fillText(o.name.replace(/\.md$/,''), px, py + r + 14*devicePixelRatio);
+    });
+    gardenRAF = requestAnimationFrame(tick);
+  }
+  tick();
+}
+
+async function showOrbDetails(agentId, orb) {
+  const box = $('#garden-orb-details');
+  box.hidden = false;
+  box.innerHTML = `<div class="orb-head"><b>${esc(orb.name)}</b><button class="icon-x" onclick="document.getElementById('garden-orb-details').hidden=true">×</button></div><div class="orb-body">loading…</div>`;
+  try {
+    const t = await api(`/api/agents/${encodeURIComponent(agentId)}/memory/${encodeURIComponent(orb.name)}`);
+    box.querySelector('.orb-body').textContent = (t || '').slice(0, 2000);
+  } catch (e) { box.querySelector('.orb-body').textContent = 'Failed: '+e.message; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+ * ⚡ #9 — PULSE CORE
+ * ═══════════════════════════════════════════════════════════════════ */
+function updatePulseCore() {
+  const spokesG = $('#pulse-spokes'); if (!spokesG) return;
+  const active = state.pulseCount;
+  const heart = $('#pulse-heart'); const r1 = $('#pulse-ring-1');
+  const tempo = clamp(1.8 - Math.min(active, 8) * 0.15, 0.6, 1.8);
+  heart.style.animation = `heart ${tempo.toFixed(2)}s ease-in-out infinite`;
+  r1.style.animation = `spinCw ${(28 - Math.min(active,6)*2).toFixed(1)}s linear infinite`;
+  spokesG.innerHTML = '';
+  const activeAgents = state.agents.filter(a => a.hasActiveSession);
+  activeAgents.forEach((a, i) => {
+    const ang = (Math.PI*2 * i / Math.max(activeAgents.length, 1)) - Math.PI/2;
+    const x = Math.cos(ang) * 72; const y = Math.sin(ang) * 72;
+    const ln = document.createElementNS('http://www.w3.org/2000/svg','line');
+    ln.setAttribute('x1','0'); ln.setAttribute('y1','0');
+    ln.setAttribute('x2', x); ln.setAttribute('y2', y);
+    ln.setAttribute('stroke', a.color || '#ffb347');
+    ln.setAttribute('stroke-width', '1.2'); ln.setAttribute('opacity','.6');
+    spokesG.appendChild(ln);
+  });
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+ * INSPECTOR
+ * ═══════════════════════════════════════════════════════════════════ */
+let inspState = { agentId: null, section: 'files', list: [], current: null, editing: false };
+
+async function openInspector(agentId) {
+  inspState.agentId = agentId; inspState.section = 'files'; inspState.current = null;
+  const a = state.agentsById[agentId];
+  $('#inspector-emoji').textContent = a?.emoji || '✦';
+  $('#inspector-name').textContent = a?.name || agentId;
+  $$('.insp-tab').forEach(t => t.classList.toggle('active', t.dataset.section === 'files'));
+  await inspectorShowSection('files');
+  $('#inspector-overlay').classList.add('open');
+}
+window.openInspector = openInspector;
+function closeInspector() { $('#inspector-overlay').classList.remove('open'); }
+window.closeInspector = closeInspector;
+
+async function inspectorShowSection(section) {
+  inspState.section = section; inspState.current = null; inspState.editing = false;
+  $$('.insp-tab').forEach(t => t.classList.toggle('active', t.dataset.section === section));
+  $('#inspector-view').textContent = '';
+  $('#inspector-editor').hidden = true; $('#inspector-editor').value = '';
+  $('#inspector-current').textContent = '';
+  $('#inspector-edit-btn').hidden = true; $('#inspector-save-btn').hidden = true;
+  const list = $('#inspector-list');
+  list.innerHTML = '<div class="insp-dim">loading…</div>';
+  const id = inspState.agentId;
+  try {
+    if (section === 'files') {
+      const files = await api(`/api/agents/${encodeURIComponent(id)}/files`);
+      inspState.list = files;
+      list.innerHTML = (files || []).map(f => `<button class="insp-li" onclick="inspectorOpen('${esc(f.name || f.filename || f)}')">${esc(f.name || f.filename || f)}</button>`).join('') || '<div class="insp-dim">no files</div>';
+    } else if (section === 'memory') {
+      const files = await api(`/api/agents/${encodeURIComponent(id)}/memory`);
+      inspState.list = files;
+      list.innerHTML = (files || []).map(f => `<button class="insp-li" onclick="inspectorOpen('${esc(f.name || f.filename || f)}')">${esc(f.name || f.filename || f)}</button>`).join('') || '<div class="insp-dim">no memory</div>';
+    } else if (section === 'topics') {
+      const a = state.agentsById[id];
+      const topics = a?.topics || [];
+      list.innerHTML = topics.map(t => `<button class="insp-li" onclick="inspectorOpenTopic('${esc(t)}','TOPIC.md')">${esc(t)}</button>`).join('') || '<div class="insp-dim">no topics</div>';
+    }
+  } catch (e) { list.innerHTML = `<div class="insp-dim">Error: ${esc(e.message)}</div>`; }
+}
+window.inspectorShowSection = inspectorShowSection;
+
+async function inspectorOpen(filename) {
+  inspState.current = filename; inspState.editing = false;
+  $('#inspector-current').textContent = filename;
+  const id = inspState.agentId; const section = inspState.section;
+  try {
+    const text = section === 'memory'
+      ? await api(`/api/agents/${encodeURIComponent(id)}/memory/${encodeURIComponent(filename)}`)
+      : await api(`/api/agents/${encodeURIComponent(id)}/files/${encodeURIComponent(filename)}`);
+    $('#inspector-view').textContent = text;
+    $('#inspector-view').hidden = false;
+    $('#inspector-editor').value = text; $('#inspector-editor').hidden = true;
+    $('#inspector-edit-btn').hidden = section === 'memory';
+    $('#inspector-save-btn').hidden = true;
+  } catch (e) { $('#inspector-view').textContent = 'Error: '+e.message; }
+}
+window.inspectorOpen = inspectorOpen;
+
+async function inspectorOpenTopic(topic, filename) {
+  inspState.current = `${topic}/${filename}`;
+  $('#inspector-current').textContent = `${topic} / ${filename}`;
+  const id = inspState.agentId;
+  try {
+    const text = await api(`/api/agents/${encodeURIComponent(id)}/topics/${encodeURIComponent(topic)}/${encodeURIComponent(filename)}`);
+    $('#inspector-view').textContent = text;
+  } catch (e) { $('#inspector-view').textContent = 'Error: '+e.message; }
+}
+window.inspectorOpenTopic = inspectorOpenTopic;
+
+function inspectorToggleEdit() {
+  inspState.editing = !inspState.editing;
+  $('#inspector-view').hidden = inspState.editing;
+  $('#inspector-editor').hidden = !inspState.editing;
+  $('#inspector-save-btn').hidden = !inspState.editing;
+  if (inspState.editing) $('#inspector-editor').focus();
+}
+window.inspectorToggleEdit = inspectorToggleEdit;
+
+async function inspectorSave() {
+  const content = $('#inspector-editor').value;
+  const id = inspState.agentId; const fn = inspState.current;
+  try {
+    await api(`/api/agents/${encodeURIComponent(id)}/files/${encodeURIComponent(fn)}`, { method:'PUT', body: { content } });
+    $('#inspector-view').textContent = content;
+    toast('Saved', 'ok');
+    inspectorToggleEdit();
+  } catch (e) { toast(`Save failed: ${e.message}`, 'err'); }
+}
+window.inspectorSave = inspectorSave;
+
+/* ═══════════════════════════════════════════════════════════════════
+ * SKILLS / TOPICS / HEALTH
+ * ═══════════════════════════════════════════════════════════════════ */
+async function openSkills() {
+  $('#skills-overlay').classList.add('open');
+  const list = $('#skills-list');
+  list.innerHTML = '<div class="insp-dim">loading…</div>';
+  try {
+    const skills = await api('/api/skills');
+    $('#skills-count').textContent = `${skills.length} skills`;
+    list.innerHTML = skills.map(s => `<button class="insp-li" data-id="${esc(s.id || s.name)}" onclick="openSkillView('${esc(s.id || s.name)}','${esc(s.name || s.id)}')">${esc(s.name || s.id)}<span class="insp-sub">${esc(s.description || '')}</span></button>`).join('');
+    $('#skills-search').oninput = (e) => {
+      const q = e.target.value.toLowerCase();
+      $$('#skills-list .insp-li').forEach(b => { b.style.display = b.textContent.toLowerCase().includes(q) ? '' : 'none'; });
+    };
+  } catch (e) { list.innerHTML = `<div class="insp-dim">Error: ${esc(e.message)}</div>`; }
+}
+window.openSkills = openSkills;
+function closeSkills() { $('#skills-overlay').classList.remove('open'); }
+window.closeSkills = closeSkills;
+
+async function openSkillView(id, name) {
+  $('#skills-current').textContent = name;
+  try {
+    const text = await api(`/api/skills/${encodeURIComponent(id)}`);
+    $('#skills-view').textContent = text;
+  } catch (e) { $('#skills-view').textContent = 'Error: '+e.message; }
+}
+window.openSkillView = openSkillView;
+
+async function openTopics() {
+  $('#topics-overlay').classList.add('open');
+  const list = $('#topics-list');
+  list.innerHTML = '<div class="insp-dim">loading…</div>';
+  try {
+    const topics = await api('/api/topics');
+    $('#topics-count').textContent = `${topics.length} topics`;
+    list.innerHTML = topics.map(t => `
+      <div class="topic-row" onclick="launchAgent('${esc(t.agentId)}','${esc(t.name || t.topic)}')">
+        <span class="topic-emoji">${esc(state.agentsById[t.agentId]?.emoji || '✦')}</span>
+        <div><b>${esc(t.name || t.topic)}</b><em>${esc(t.agentId)}</em></div>
+        <button class="btn btn-primary btn-xs" onclick="event.stopPropagation();launchAgent('${esc(t.agentId)}','${esc(t.name || t.topic)}')">Summon</button>
+      </div>`).join('') || '<div class="insp-dim">no topics</div>';
+    $('#topics-search').oninput = (e) => {
+      const q = e.target.value.toLowerCase();
+      $$('#topics-list .topic-row').forEach(r => { r.style.display = r.textContent.toLowerCase().includes(q) ? '' : 'none'; });
+    };
+  } catch (e) { list.innerHTML = `<div class="insp-dim">Error: ${esc(e.message)}</div>`; }
+}
+window.openTopics = openTopics;
+function closeTopics() { $('#topics-overlay').classList.remove('open'); }
+window.closeTopics = closeTopics;
+
+async function openAgentHealth() {
+  $('#health-overlay').classList.add('open');
+  $('#health-summary').textContent = 'Scanning…';
+  const list = $('#health-list');
+  list.innerHTML = '<div class="insp-dim">loading…</div>';
+  try {
+    const res = await api('/api/health/agents');
+    const items = Array.isArray(res) ? res : (res.agents || []);
+    const healthy = items.filter(x => !x.issues || x.issues.length === 0).length;
+    $('#health-summary').textContent = `${healthy}/${items.length} healthy`;
+    list.innerHTML = items.map(h => {
+      const a = state.agentsById[h.agentId || h.id] || {};
+      const ok = !h.issues || h.issues.length === 0;
+      return `<div class="health-row ${ok?'ok':'warn'}" style="--cell-color:${esc(a.color || '#ffb347')}">
+        <span class="h-emoji">${esc(a.emoji || '✦')}</span>
+        <div class="h-main"><b>${esc(a.name || h.agentId)}</b>
+          <em>${ok ? 'healthy' : (h.issues || []).map(esc).join(' · ')}</em>
+        </div>
+        <span class="h-dot ${ok?'ok':'warn'}"></span>
+      </div>`;
+    }).join('') || '<div class="insp-dim">no data</div>';
+  } catch (e) { list.innerHTML = `<div class="insp-dim">Error: ${esc(e.message)}</div>`; }
+}
+window.openAgentHealth = openAgentHealth;
+function closeAgentHealth() { $('#health-overlay').classList.remove('open'); }
+window.closeAgentHealth = closeAgentHealth;
+
+/* ═══════════════════════════════════════════════════════════════════
+ * ACTIVITY FEED
+ * ═══════════════════════════════════════════════════════════════════ */
+function toggleActivityFeed() {
+  const el = $('#activity-feed');
+  const hidden = el.hasAttribute('hidden');
+  if (hidden) { el.removeAttribute('hidden'); renderActivity(); }
+  else el.setAttribute('hidden','');
+}
+window.toggleActivityFeed = toggleActivityFeed;
+
+function renderActivity() {
+  const list = $('#activity-list'); if (!list) return;
+  list.innerHTML = '';
+  state.activity.slice(-40).reverse().forEach(ev => renderActivityRow(ev));
+}
+
+function renderActivityRow(ev, prepend) {
+  const list = $('#activity-list'); if (!list) return;
+  const a = state.agentsById[ev.agentId] || {};
+  const color = a.color || '#ffb347';
+  const row = document.createElement('div');
+  row.className = 'act-row';
+  row.style.setProperty('--cell-color', color);
+  row.innerHTML = `<span class="act-dot"></span><span class="act-emoji">${esc(a.emoji || '•')}</span><div class="act-text"><b>${esc(ev.type || 'event')}</b><em>${esc(ev.text || ev.message || '')}</em></div><span class="act-time">${relTime(ev.timestamp || now())}</span>`;
+  if (prepend) list.prepend(row); else list.appendChild(row);
+  while (list.childElementCount > 80) list.lastElementChild.remove();
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+ * SETTINGS / WEBHOOKS
+ * ═══════════════════════════════════════════════════════════════════ */
+async function openSettings() {
+  $('#settings-overlay').classList.add('open');
+  try {
+    const { secret } = await api('/api/webhooks/secret');
+    $('#set-webhook-secret').textContent = `${location.origin}/api/webhooks/${secret}/<agentId>`;
+  } catch { $('#set-webhook-secret').textContent = '(unavailable)'; }
+  try {
+    const out = await api('/api/webhooks/outgoing');
+    const urls = Array.isArray(out) ? out : (out.urls || []);
+    $('#set-webhooks').value = urls.join('\n');
+  } catch {}
+  $('#set-aura-intensity').value = state.auraIntensity;
+  $('#set-motion-calm').checked = state.calmMotion;
+  $('#set-ambient').checked = state.ambientHum;
+}
+window.openSettings = openSettings;
+function closeSettings() { $('#settings-overlay').classList.remove('open'); }
+window.closeSettings = closeSettings;
+
+async function saveWebhooks() {
+  const urls = $('#set-webhooks').value.split('\n').map(s => s.trim()).filter(Boolean);
+  try { await api('/api/webhooks/outgoing', { method:'PUT', body: { urls } }); toast('Webhooks saved', 'ok'); }
+  catch (e) { toast('Save failed: '+e.message, 'err'); }
+}
+window.saveWebhooks = saveWebhooks;
+
+async function toggleNotifications(on) {
+  if (on && 'Notification' in window) {
+    const p = await Notification.requestPermission();
+    state.notifOk = p === 'granted';
+  } else state.notifOk = false;
+}
+window.toggleNotifications = toggleNotifications;
+
+/* ═══════════════════════════════════════════════════════════════════
+ * QUICK CHAT
+ * ═══════════════════════════════════════════════════════════════════ */
+let quickChatTarget = null;
+function openQuickChat(agentId) {
+  quickChatTarget = agentId;
+  const a = state.agentsById[agentId];
+  $('#quickchat-title').textContent = `Quick ask · ${a?.emoji || ''} ${a?.name || agentId}`;
+  $('#quickchat-input').value = '';
+  $('#quickchat-response').hidden = true;
+  $('#quickchat-overlay').classList.add('open');
+  $('#quickchat-input').focus();
+}
+window.openQuickChat = openQuickChat;
+function closeQuickChat() { $('#quickchat-overlay').classList.remove('open'); }
+window.closeQuickChat = closeQuickChat;
+
+async function sendQuickChat() {
+  const prompt = $('#quickchat-input').value.trim();
+  if (!prompt || !quickChatTarget) return;
+  const pre = $('#quickchat-response');
+  pre.hidden = false; pre.textContent = '...thinking...';
+  try {
+    const r = await api('/api/quickchat', { method:'POST', body: { agentId: quickChatTarget, prompt } });
+    pre.textContent = r.response || '(no response)';
+  } catch (e) { pre.textContent = 'Error: '+e.message; }
+}
+window.sendQuickChat = sendQuickChat;
+
+/* ═══════════════════════════════════════════════════════════════════
+ * PINS / TTS / VOICE
+ * ═══════════════════════════════════════════════════════════════════ */
+function restorePinned() {
+  try { state.pinned = new Set(JSON.parse(localStorage.getItem('pinned') || '[]')); } catch {}
+}
+
+let ttsQ = [];
+function queueTTS(text) {
+  if (!('speechSynthesis' in window)) return;
+  ttsQ.push(text); if (!window.speechSynthesis.speaking) speakNext();
+}
+function speakNext() {
+  if (!ttsQ.length) return;
+  const u = new SpeechSynthesisUtterance(ttsQ.shift().replace(/\x1b\[[0-9;]*m/g,''));
+  u.onend = speakNext; u.rate = 1; u.pitch = 1;
+  window.speechSynthesis.speak(u);
+}
+function toggleTTS() {
+  state.ttsEnabled = !state.ttsEnabled;
+  $('#tts-btn').classList.toggle('on', state.ttsEnabled);
+  toast(`TTS ${state.ttsEnabled?'on':'off'}`, 'info');
+  if (!state.ttsEnabled) window.speechSynthesis?.cancel();
+}
+window.toggleTTS = toggleTTS;
+
+let recog = null;
+function toggleVoiceInput() {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) { toast('Voice not supported', 'err'); return; }
+  if (recog) { recog.stop(); recog = null; $('#voice-btn').classList.remove('on'); return; }
+  recog = new SR(); recog.continuous = false; recog.interimResults = false;
+  recog.onresult = (e) => {
+    const txt = e.results[0][0].transcript;
+    const rec = state.terminals[state.activeSession];
+    if (rec) try { rec.ws.send(JSON.stringify({type:'input', data: txt + '\r'})); } catch {}
+  };
+  recog.onend = () => { $('#voice-btn').classList.remove('on'); recog = null; };
+  recog.start();
+  $('#voice-btn').classList.add('on');
+}
+window.toggleVoiceInput = toggleVoiceInput;
+
+/* ═══════════════════════════════════════════════════════════════════
+ * GLOBAL HANDLERS
+ * ═══════════════════════════════════════════════════════════════════ */
+function attachGlobalHandlers() {
+  $$('#filter-ring .ring-chip').forEach(b => {
+    b.addEventListener('click', () => {
+      state.filter = b.dataset.filter;
+      $$('#filter-ring .ring-chip').forEach(x => x.classList.toggle('active', x === b));
+      renderHive(); renderGrid(); renderList();
+    });
+  });
+  $('#hive-search-input')?.addEventListener('input', (e) => { state.search = e.target.value; renderHive(); });
+  $('#grid-search-input')?.addEventListener('input', (e) => { state.search = e.target.value; renderGrid(); });
+
+  document.addEventListener('click', (e) => {
+    const card = $('#detail-card');
+    if (!card.hidden && !card.contains(e.target) && !e.target.closest('[data-agent]') && !e.target.closest('.agent-card')) closeDetail();
+  });
+
+  window.addEventListener('resize', () => { if (state.view === 'hive') renderHive(); });
+
+  document.addEventListener('keydown', (e) => {
+    const tag = (e.target.tagName || '').toLowerCase();
+    const typing = tag === 'input' || tag === 'textarea' || e.target.isContentEditable;
+
+    if (e.key === 'Escape') {
+      ['incantation-overlay','swarm-overlay','garden-overlay','inspector-overlay','skills-overlay','topics-overlay','health-overlay','settings-overlay','quickchat-overlay','topic-modal','shortcuts-overlay'].forEach(id => { const el = $('#'+id); if (el) el.classList.remove('open'); });
+      closeDetail();
+      if (state.focusMode) toggleFocusMode();
+      return;
+    }
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); openIncantation(); return; }
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's' && inspState.editing) { e.preventDefault(); inspectorSave(); return; }
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f' && state.view === 'terminal') { e.preventDefault(); toggleTerminalSearch(); return; }
+    if ((e.ctrlKey || e.metaKey) && /^[1-8]$/.test(e.key)) {
+      const alive = state.sessions.filter(s => s.alive);
+      const pick = alive[parseInt(e.key,10)-1];
+      if (pick) { e.preventDefault(); switchToSession(pick.id); }
+      return;
+    }
+    if (typing) return;
+    if (e.key === '/') { e.preventDefault(); $('#hive-search-input')?.focus(); return; }
+    if (e.key === '?') { toggleShortcuts(); return; }
+    const k = e.key.toLowerCase();
+    if (k === 'h') showHive();
+    else if (k === 'g') showGrid();
+    else if (k === 'l') showList();
+    else if (k === 'f') toggleFocusMode();
+    else if (k === 't') toggleTimeRiver();
+    else if (k === 's') openSwarm();
+    else if (k === 'm') openMemoryGarden();
+    else if (k === 'a') toggleActivityFeed();
+  });
+}
+
+function toggleShortcuts() { $('#shortcuts-overlay').classList.toggle('open'); }
+window.toggleShortcuts = toggleShortcuts;
+
+function openIncantation() {
+  $('#incantation-overlay').classList.add('open');
+  setTimeout(() => $('#incantation-input').focus(), 50);
+  if (window.incantationInit) window.incantationInit();
+}
+window.openIncantation = openIncantation;
+function closeIncantation() { $('#incantation-overlay').classList.remove('open'); }
+window.closeIncantation = closeIncantation;
