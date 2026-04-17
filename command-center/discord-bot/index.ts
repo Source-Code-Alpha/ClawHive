@@ -9,8 +9,14 @@ import {
   ChannelType,
   EmbedBuilder,
   Message,
+  MessageReaction,
+  User,
+  PartialMessageReaction,
+  PartialUser,
+  Partials,
   Interaction,
   TextChannel,
+  AttachmentBuilder,
 } from "discord.js";
 import fs from "fs";
 import path from "path";
@@ -35,9 +41,20 @@ const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.GuildMessageReactions,
     GatewayIntentBits.MessageContent,
   ],
+  // Partials let us receive reaction events on messages the bot hasn't cached.
+  partials: [Partials.Message, Partials.Channel, Partials.Reaction],
 });
+
+// Discord free-server attachment cap (25 MB). Files larger than this get a
+// friendly "too large" note with the file path so the operator can fetch it.
+const MAX_DISCORD_FILE_BYTES = 25 * 1024 * 1024;
+
+// Map channelId -> the user message ID that triggered the current in-flight turn.
+// Used so reacting 🛑 on that specific message stops only that turn.
+const runningMessageIds = new Map<string, string>();
 
 const sessions = new SessionManager(
   async (channelId, content) => {
@@ -50,6 +67,58 @@ const sessions = new SessionManager(
     const channel = await client.channels.fetch(channelId).catch(() => null);
     if (channel && channel.isTextBased() && "sendTyping" in channel) {
       await (channel as TextChannel).sendTyping();
+    }
+  },
+  // Upload callback — agents emit [[UPLOAD:/path]] markers or drop files into
+  // ~/clawd-shared/discord-outbox/<channelId>/ to send files via Discord.
+  async (channelId, filePaths) => {
+    const channel = await client.channels.fetch(channelId).catch(() => null);
+    if (!channel || !channel.isTextBased() || !("send" in channel)) return;
+    const ch = channel as TextChannel;
+
+    // Dedupe and validate
+    const seen = new Set<string>();
+    const ok: { path: string; size: number }[] = [];
+    const missing: string[] = [];
+    const tooBig: { path: string; size: number }[] = [];
+    for (const p of filePaths) {
+      if (seen.has(p)) continue;
+      seen.add(p);
+      try {
+        const st = fs.statSync(p);
+        if (!st.isFile()) continue;
+        if (st.size > MAX_DISCORD_FILE_BYTES) tooBig.push({ path: p, size: st.size });
+        else ok.push({ path: p, size: st.size });
+      } catch {
+        missing.push(p);
+      }
+    }
+
+    // Discord caps attachments per message at 10 — batch if needed
+    const BATCH = 10;
+    for (let i = 0; i < ok.length; i += BATCH) {
+      const slice = ok.slice(i, i + BATCH);
+      const atts = slice.map(f => new AttachmentBuilder(f.path, { name: path.basename(f.path) }));
+      try {
+        await ch.send({
+          content: slice.length === 1
+            ? `📎 \`${path.basename(slice[0].path)}\``
+            : `📎 ${slice.length} files`,
+          files: atts,
+        });
+      } catch (err: any) {
+        console.error("[upload]", err.message);
+        await ch.send(`_Upload failed for ${slice.length} file(s): ${err.message}_`).catch(() => {});
+      }
+    }
+
+    if (tooBig.length > 0) {
+      const lines = tooBig.map(f =>
+        `• \`${f.path}\` — ${(f.size / 1024 / 1024).toFixed(1)} MB (over Discord's 25 MB cap)`);
+      await ch.send(`_Too large to attach:_\n${lines.join("\n")}`).catch(() => {});
+    }
+    if (missing.length > 0) {
+      await ch.send(`_File(s) not found:_\n${missing.map(p => `• \`${p}\``).join("\n")}`).catch(() => {});
     }
   }
 );
@@ -123,10 +192,40 @@ client.on(Events.MessageCreate, async (msg: Message) => {
   const content = msg.content.trim();
   if (!content) return;
   await msg.react("⏳").catch(() => {});
+  await msg.react("🛑").catch(() => {});   // tap 🛑 to interrupt this turn
+  runningMessageIds.set(msg.channelId, msg.id);
   const sent = await sessions.sendMessage(msg.channelId, content);
-  // Replace the hourglass with a check or X based on outcome
+  // Clear interrupt-tracking + transient reactions, then mark outcome
+  runningMessageIds.delete(msg.channelId);
   await msg.reactions.cache.get("⏳")?.users.remove(client.user!.id).catch(() => {});
+  await msg.reactions.cache.get("🛑")?.users.remove(client.user!.id).catch(() => {});
   await msg.react(sent ? "✅" : "❌").catch(() => {});
+});
+
+// --- reaction handler (🛑 to interrupt) ---
+client.on(Events.MessageReactionAdd, async (
+  reaction: MessageReaction | PartialMessageReaction,
+  user: User | PartialUser
+) => {
+  if (user.bot) return;
+  if (!isAuthorized(user.id)) return;
+  // Hydrate partials (reactions on uncached messages arrive partial)
+  try {
+    if (reaction.partial) await reaction.fetch();
+    if (reaction.message.partial) await reaction.message.fetch();
+  } catch { return; }
+  if (reaction.emoji.name !== "🛑") return;
+  const channelId = reaction.message.channelId;
+  // Only react to the 🛑 on the exact message whose turn is running.
+  const trackedMsgId = runningMessageIds.get(channelId);
+  if (!trackedMsgId || trackedMsgId !== reaction.message.id) return;
+  const killed = sessions.stopMessage(channelId);
+  if (killed) {
+    const ch = await client.channels.fetch(channelId).catch(() => null);
+    if (ch && ch.isTextBased() && "send" in ch) {
+      await (ch as TextChannel).send("_🛑 interrupt received — killing the current turn…_").catch(() => {});
+    }
+  }
 });
 
 // --- slash command handler ---
@@ -210,12 +309,10 @@ client.on(Events.InteractionCreate, async (interaction: Interaction) => {
         await interaction.reply({ content: "This channel is not bound to an agent.", ephemeral: true });
         return;
       }
-      const wsState = state?.ws?.readyState;
-      const wsLabel = wsState === undefined ? "n/a" : wsState === 1 ? "open" : wsState === 0 ? "connecting" : wsState === 2 ? "closing" : "closed";
       const lines = [
         `**Agent:** ${agentId}`,
-        `**Session:** ${state?.sessionId ?? "_none_"}`,
-        `**Connection:** ${wsLabel}`,
+        `**Session:** ${state?.sessionUuid ?? "_none_"}`,
+        `**Turn in flight:** ${sessions.isRunning(interaction.channelId) ? "yes (use `/stop` or tap 🛑 to interrupt)" : "no"}`,
       ];
       await interaction.reply({ content: lines.join("\n"), ephemeral: true });
     }
@@ -241,6 +338,30 @@ client.on(Events.InteractionCreate, async (interaction: Interaction) => {
         await interaction.editReply({ embeds: [embed] });
       } catch (err: any) {
         await interaction.editReply(`Error: ${err.message}`);
+      }
+    }
+
+    else if (cmd === "stop") {
+      const agentId = channelMap.get(interaction.channelId);
+      if (!agentId) {
+        await interaction.reply({ content: "This channel is not bound to an agent.", ephemeral: true });
+        return;
+      }
+      const killed = sessions.stopMessage(interaction.channelId);
+      if (killed) {
+        await interaction.reply(`🛑 Stopped the running turn in **${agentId}**.`);
+      } else {
+        await interaction.reply({ content: `_Nothing to stop — no turn is running in this channel._`, ephemeral: true });
+      }
+    }
+
+    else if (cmd === "stop-all") {
+      const killed = sessions.stopAll();
+      if (killed.length === 0) {
+        await interaction.reply({ content: "_Nothing to stop — no in-flight turns._", ephemeral: true });
+      } else {
+        const lines = killed.map(k => `• ${k.agentId}`).join("\n");
+        await interaction.reply(`🛑 Stopped **${killed.length}** in-flight turn(s):\n${lines}`);
       }
     }
 

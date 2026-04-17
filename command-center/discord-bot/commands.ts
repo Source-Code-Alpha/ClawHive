@@ -27,6 +27,12 @@ export const commands = [
   new SlashCommandBuilder()
     .setName("health")
     .setDescription("Check ClawHive command center health"),
+  new SlashCommandBuilder()
+    .setName("stop")
+    .setDescription("Interrupt the running agent in this channel (kills the current turn)"),
+  new SlashCommandBuilder()
+    .setName("stop-all")
+    .setDescription("Interrupt every in-flight agent turn across the whole fleet"),
 ].map(c => c.toJSON());
 
 export async function registerCommands() {

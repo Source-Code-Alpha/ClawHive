@@ -1,7 +1,7 @@
 // Spawn `claude -p` directly per Discord message — no PTY, no TUI scraping.
 // Each channel keeps a session UUID so subsequent messages resume the conversation.
 
-import { spawn, spawnSync } from "child_process";
+import { spawn, spawnSync, type ChildProcess } from "child_process";
 import fs from "fs";
 import os from "os";
 import path from "path";
@@ -10,6 +10,14 @@ import { fileURLToPath } from "url";
 import { config } from "./config.js";
 import { api, type Agent } from "./clawhive-api.js";
 import { agentHeader, chunkMessage } from "./formatter.js";
+
+// Shared outbox for agent-initiated uploads — files dropped into
+// ~/clawd-shared/discord-outbox/<channelId>/ are sent after a turn completes.
+const OUTBOX_ROOT = path.join(os.homedir(), "clawd-shared", "discord-outbox");
+// Upload marker agents can print in conversational replies, e.g.
+//   Here is the file: [[UPLOAD:C:/path/to/file.png]]
+// The bot strips the marker from the visible reply and attaches the file.
+const UPLOAD_MARKER_RX = /\[\[UPLOAD:\s*([^\]\n]+?)\s*\]\]/g;
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SESSIONS_FILE = path.join(__dirname, "sessions.json");
@@ -37,6 +45,11 @@ const TONE_PROMPT = [
   "atlas (research), soha_rd (R&D), soha_finance (finance), the_doctor (system health),",
   "crypto_trader (crypto), idea_forge (product strategy), aurelia (design), reco (restructuring), personal (Director).",
   "Use delegation when you need facts from another agent's domain. The target agent answers from its own memory and identity.",
+  "",
+  "FILE UPLOADS: to send a file from this machine to Discord, print a marker on its own line:",
+  "  [[UPLOAD:/absolute/path/to/file.ext]]",
+  "The bridge strips the marker from the reply and attaches the file (max 25MB). Use absolute paths.",
+  "Never upload .env, credentials, or private keys unless explicitly asked. See skill: discord-upload.",
 ].join(" ");
 
 // === MEMORY LAYERS (1000X stack) ===
@@ -183,20 +196,26 @@ interface ChannelState {
   sessionUuid: string | null;  // claude session ID for --resume
   isRunning: boolean;          // prevent concurrent claude invocations per channel
   agentCache: Agent | null;
+  currentChild: ChildProcess | null;  // live claude subprocess (for /stop)
+  pendingUploads: string[];           // file paths to send after this turn
+  stoppedByUser: boolean;             // true if /stop (or 🛑 reaction) killed the current turn
 }
 
 type OutputCallback = (channelId: string, content: string) => Promise<void>;
 type TypingCallback = (channelId: string) => Promise<void>;
+type UploadCallback = (channelId: string, filePaths: string[]) => Promise<void>;
 
 export class SessionManager {
   private channels = new Map<string, ChannelState>();
   private outputCallback: OutputCallback;
   private typingCallback: TypingCallback;
+  private uploadCallback: UploadCallback;
   private savedSessions: Record<string, string> = {};
 
-  constructor(out: OutputCallback, typing: TypingCallback) {
+  constructor(out: OutputCallback, typing: TypingCallback, upload?: UploadCallback) {
     this.outputCallback = out;
     this.typingCallback = typing;
+    this.uploadCallback = upload || (async () => {});
     this.loadSessionsFile();
   }
 
@@ -236,6 +255,9 @@ export class SessionManager {
         sessionUuid: this.savedSessions[channelId] || null,
         isRunning: false,
         agentCache: null,
+        currentChild: null,
+        pendingUploads: [],
+        stoppedByUser: false,
       };
       this.channels.set(channelId, state);
     } else {
@@ -322,22 +344,42 @@ export class SessionManager {
     const FLUSH_DEBOUNCE_MS = 1800;                       // wait this long after last delta before sending
     const MAX_BUF_BYTES = 1700;                           // force-flush if buffer exceeds this
 
-    const flush = async () => {
+    const flush = async (finalDrain = false) => {
       if (flushTimer) {
         clearTimeout(flushTimer);
         flushTimer = null;
       }
       if (!textBuf.trim()) return;
 
-      const out = textBuf;
-      textBuf = "";
-      totalCharsEmitted += out.length;
+      // Hold back a trailing partial `[[UPLOAD…` so we don't split a marker across
+      // flushes. On the final drain (after claude exits) we flush everything.
+      let out = textBuf;
+      const openIdx = out.lastIndexOf("[[");
+      const closeIdx = out.lastIndexOf("]]");
+      if (!finalDrain && openIdx !== -1 && openIdx > closeIdx) {
+        textBuf = out.slice(openIdx);
+        out = out.slice(0, openIdx);
+      } else {
+        textBuf = "";
+      }
+
+      // Extract and strip upload markers
+      let m: RegExpExecArray | null;
+      const rx = new RegExp(UPLOAD_MARKER_RX.source, "g");
+      while ((m = rx.exec(out)) !== null) {
+        const p = m[1].trim();
+        if (p) state.pendingUploads.push(p);
+      }
+      const cleaned = out.replace(UPLOAD_MARKER_RX, "").replace(/\n{3,}/g, "\n\n");
+      if (!cleaned.trim()) return;
+
+      totalCharsEmitted += cleaned.length;
 
       const agent = await this.getAgentInfo(channelId);
       const header = agent && !headerSent ? agentHeader(agent.emoji, agent.name) : "";
       headerSent = true;
 
-      const pieces = chunkMessage(out);
+      const pieces = chunkMessage(cleaned);
       for (let i = 0; i < pieces.length; i++) {
         const message = (i === 0 ? header : "") + pieces[i];
         try {
@@ -364,7 +406,7 @@ export class SessionManager {
       const args = [
         CLAUDE_CLI_JS,
         "-p", text,
-        "--model", "opus",
+        "--model", "claude-opus-4-7",
         "--dangerously-skip-permissions",
         "--append-system-prompt", fullSystemPrompt,
         "--output-format", "stream-json",
@@ -387,6 +429,7 @@ export class SessionManager {
         env: { ...process.env, FORCE_COLOR: "0", NO_COLOR: "1", TERM: "dumb" },
         windowsHide: true,
       });
+      state.currentChild = child;
 
       let lineBuf = "";
       let stderr = "";
@@ -394,7 +437,7 @@ export class SessionManager {
 
       const timer = setTimeout(() => {
         timedOut = true;
-        try { child.kill("SIGKILL"); } catch {}
+        this.killChild(child);
       }, RESPONSE_TIMEOUT_MS);
 
       // Track recent tool name so we can collapse runs of identical tools (e.g. Read, Read, Read)
@@ -495,13 +538,49 @@ export class SessionManager {
 
       clearTimeout(timer);
       typingActive = false;
+      state.currentChild = null;
 
-      // Final flush in case the stream ended without an explicit result event
-      await flush();
+      // Final flush (finalDrain=true so any held-back partial-marker tail flushes too)
+      await flush(true);
+
+      // Drain the shared outbox dir for this channel — files an agent dropped
+      // via tool calls instead of a marker (for >25MB or binary pipeline use).
+      const outboxDir = path.join(OUTBOX_ROOT, channelId);
+      try {
+        if (fs.existsSync(outboxDir)) {
+          for (const name of fs.readdirSync(outboxDir)) {
+            const full = path.join(outboxDir, name);
+            try { if (fs.statSync(full).isFile()) state.pendingUploads.push(full); } catch {}
+          }
+        }
+      } catch {}
+
+      // Flush any queued uploads to Discord via the upload callback
+      if (state.pendingUploads.length > 0) {
+        const toSend = state.pendingUploads.slice();
+        state.pendingUploads = [];
+        try {
+          await this.uploadCallback(channelId, toSend);
+        } catch (err: any) {
+          console.error("[uploads]", err.message);
+        }
+        // Delete drained outbox files so they don't re-send next turn
+        for (const p of toSend) {
+          if (p.startsWith(outboxDir)) {
+            try { fs.unlinkSync(p); } catch {}
+          }
+        }
+      }
 
       if (timedOut) {
         const minutes = Math.round(RESPONSE_TIMEOUT_MS / 60000);
         await this.outputCallback(channelId, `_Timed out after ${minutes} minutes — killed the agent process. Try again, ask a shorter follow-up, or set \`DISCORD_TIMEOUT_MIN\` higher in .env._`);
+        return false;
+      }
+
+      if (state.stoppedByUser) {
+        state.stoppedByUser = false;
+        await this.outputCallback(channelId, "_🛑 Stopped — agent killed mid-task. Next message starts a fresh turn (same session)._");
         return false;
       }
 
@@ -541,7 +620,53 @@ export class SessionManager {
       if (flushTimer) clearTimeout(flushTimer);
       typingActive = false;
       state.isRunning = false;
+      state.currentChild = null;
     }
+  }
+
+  // Hard-kill a subprocess and its children. On Windows, child.kill() doesn't
+  // terminate the grandchild tree (claude cli spawns node for tools), so use taskkill.
+  private killChild(child: ChildProcess): void {
+    if (!child || child.killed) return;
+    try {
+      if (process.platform === "win32" && child.pid) {
+        spawnSync("taskkill", ["/pid", String(child.pid), "/t", "/f"], { windowsHide: true });
+      } else {
+        child.kill("SIGTERM");
+        setTimeout(() => { try { if (!child.killed) child.kill("SIGKILL"); } catch {} }, 2000);
+      }
+    } catch (err: any) {
+      console.error("[kill]", err.message);
+    }
+  }
+
+  // Stop the currently-running turn in a single channel. Returns true if something was killed.
+  stopMessage(channelId: string): boolean {
+    const state = this.channels.get(channelId);
+    if (!state || !state.currentChild) return false;
+    state.stoppedByUser = true;
+    this.killChild(state.currentChild);
+    console.log(`[stop] [${state.agentId}] killed by user in ${channelId}`);
+    return true;
+  }
+
+  // Stop every in-flight turn across the whole fleet. Returns how many were killed.
+  stopAll(): { channelId: string; agentId: string }[] {
+    const killed: { channelId: string; agentId: string }[] = [];
+    for (const [cid, state] of this.channels) {
+      if (state.currentChild) {
+        state.stoppedByUser = true;
+        this.killChild(state.currentChild);
+        killed.push({ channelId: cid, agentId: state.agentId });
+      }
+    }
+    if (killed.length) console.log(`[stop-all] killed ${killed.length} in-flight turns`);
+    return killed;
+  }
+
+  // Is a turn currently running in this channel?
+  isRunning(channelId: string): boolean {
+    return !!this.channels.get(channelId)?.currentChild;
   }
 
   async endSession(channelId: string): Promise<void> {
