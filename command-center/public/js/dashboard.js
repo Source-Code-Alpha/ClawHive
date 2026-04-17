@@ -245,10 +245,15 @@ function handleEvent(msg) {
  * ═══════════════════════════════════════════════════════════════════ */
 function computeHiveLayout() {
   const svg = $('#hive-map'); if (!svg) return;
+  // Use a logical canvas so the hive scales cleanly on mobile.
+  // Size tracks the container so aspect stays roughly square on phones and
+  // widescreen on desktop — preserveAspectRatio="xMidYMid meet" handles the scale.
   const rect = svg.getBoundingClientRect();
-  const W = rect.width || 1200, H = rect.height || 700;
+  const aspect = Math.max(0.75, Math.min(2.2, (rect.width || 1200) / (rect.height || 700)));
+  const H = 1400; // logical height
+  const W = Math.round(H * aspect);
   const agents = filteredAgents();
-  const ringGap = 138;
+  const ringGap = 180;
   const centers = [];
   const ringCounts = [6, 12, 18, 24];
   let ringIdx = 0, placed = 0;
@@ -276,7 +281,8 @@ function computeHiveLayout() {
     state.hiveLayout[a.id] = { x: c.x + W/2, y: c.y + H/2 };
   });
   svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
-  svg.setAttribute('width', W); svg.setAttribute('height', H);
+  svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+  svg.removeAttribute('width'); svg.removeAttribute('height');
 }
 
 function renderHive() {
@@ -335,6 +341,25 @@ function renderHive() {
       if (!e.shiftKey) return;
       e.preventDefault(); state.draggingFrom = a.id; startBridgeDrag(pos, color);
     });
+    // Mobile: long-press on a cell initiates a bridge drag (no shift key on touch)
+    let lpTimer = null, lpStart = null;
+    g.addEventListener('touchstart', (e) => {
+      const t = e.touches[0]; lpStart = { x: t.clientX, y: t.clientY };
+      lpTimer = setTimeout(() => {
+        if (navigator.vibrate) { try { navigator.vibrate(18); } catch {} }
+        state.draggingFrom = a.id;
+        startBridgeDrag(pos, color);
+      }, 520);
+    }, { passive: true });
+    g.addEventListener('touchmove', (e) => {
+      if (!lpStart) return;
+      const t = e.touches[0];
+      if (Math.hypot(t.clientX - lpStart.x, t.clientY - lpStart.y) > 10) {
+        clearTimeout(lpTimer); lpTimer = null;
+      }
+    }, { passive: true });
+    g.addEventListener('touchend', () => { clearTimeout(lpTimer); lpTimer = null; lpStart = null; });
+    g.addEventListener('touchcancel', () => { clearTimeout(lpTimer); lpTimer = null; lpStart = null; });
     cellsG.appendChild(g);
 
     const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
@@ -424,16 +449,26 @@ function startBridgeDrag(from, color) {
   tmp.setAttribute('stroke', color); tmp.setAttribute('stroke-width','2');
   tmp.setAttribute('stroke-dasharray','6,4'); tmp.setAttribute('opacity','.85');
   bridgesG.appendChild(tmp);
+  function ptFromEvent(e) {
+    const src = (e.touches && e.touches[0]) || (e.changedTouches && e.changedTouches[0]) || e;
+    return { x: src.clientX, y: src.clientY };
+  }
   function move(e) {
-    const pt = svg.createSVGPoint(); pt.x = e.clientX; pt.y = e.clientY;
+    const p = ptFromEvent(e);
+    const pt = svg.createSVGPoint(); pt.x = p.x; pt.y = p.y;
     const loc = pt.matrixTransform(svg.getScreenCTM().inverse());
     tmp.setAttribute('x2', loc.x); tmp.setAttribute('y2', loc.y);
+    if (e.cancelable && e.touches) e.preventDefault();
   }
   function up(e) {
     document.removeEventListener('mousemove', move);
     document.removeEventListener('mouseup', up);
+    document.removeEventListener('touchmove', move);
+    document.removeEventListener('touchend', up);
+    document.removeEventListener('touchcancel', up);
     tmp.remove();
-    const target = document.elementFromPoint(e.clientX, e.clientY);
+    const p = ptFromEvent(e);
+    const target = document.elementFromPoint(p.x, p.y);
     const cell = target && target.closest('[data-agent]');
     if (cell && state.draggingFrom) {
       const to = cell.getAttribute('data-agent');
@@ -443,6 +478,9 @@ function startBridgeDrag(from, color) {
   }
   document.addEventListener('mousemove', move);
   document.addEventListener('mouseup', up);
+  document.addEventListener('touchmove', move, { passive: false });
+  document.addEventListener('touchend', up);
+  document.addEventListener('touchcancel', up);
 }
 
 function forgeBridge(fromId, toId) {
@@ -941,24 +979,38 @@ function runGarden(agentId) {
   cancelAnimationFrame(gardenRAF);
 
   let dragOrb = null;
-  canvas.onmousedown = (e) => {
+  function orbPt(e) {
+    const src = (e.touches && e.touches[0]) || (e.changedTouches && e.changedTouches[0]) || e;
+    return { x: src.clientX, y: src.clientY };
+  }
+  function orbDown(e) {
+    const p = orbPt(e);
     const rect = canvas.getBoundingClientRect();
-    const mx = (e.clientX - rect.left) / rect.width;
-    const my = (e.clientY - rect.top) / rect.height;
+    const mx = (p.x - rect.left) / rect.width;
+    const my = (p.y - rect.top) / rect.height;
     dragOrb = state.gardenOrbs.find(o => {
       const dx = (o.x - mx) * rect.width; const dy = (o.y - my) * rect.height;
       return Math.hypot(dx, dy) < o.size;
     });
     if (dragOrb) showOrbDetails(agentId, dragOrb);
-  };
-  canvas.onmousemove = (e) => {
+  }
+  function orbMove(e) {
     if (!dragOrb) return;
+    const p = orbPt(e);
     const rect = canvas.getBoundingClientRect();
-    dragOrb.x = clamp((e.clientX - rect.left) / rect.width, 0, 1);
-    dragOrb.y = clamp((e.clientY - rect.top) / rect.height, 0, 1);
+    dragOrb.x = clamp((p.x - rect.left) / rect.width, 0, 1);
+    dragOrb.y = clamp((p.y - rect.top) / rect.height, 0, 1);
     dragOrb.vx = dragOrb.vy = 0;
-  };
-  canvas.onmouseup = () => { dragOrb = null; };
+    if (e.cancelable && e.touches) e.preventDefault();
+  }
+  function orbUp() { dragOrb = null; }
+  canvas.onmousedown = orbDown;
+  canvas.onmousemove = orbMove;
+  canvas.onmouseup = orbUp;
+  canvas.ontouchstart = orbDown;
+  canvas.ontouchmove = orbMove;
+  canvas.ontouchend = orbUp;
+  canvas.ontouchcancel = orbUp;
 
   function tick() {
     canvas.width = wrap.clientWidth * devicePixelRatio;

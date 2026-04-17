@@ -1833,12 +1833,240 @@ body:not(.term-view) .session-tabs { display: none; }
 }
 ::-webkit-scrollbar-thumb:hover { background: var(--surface-3); background-clip: padding-box; }
 
+/* ── Incantation FAB (mobile entry point) ────────────────────── */
+.fab-incant {
+  position: fixed;
+  right: 16px;
+  bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+  width: 56px; height: 56px;
+  border-radius: 50%;
+  border: 1px solid var(--honey);
+  background: linear-gradient(135deg, var(--honey), var(--ember));
+  color: #1a0e08;
+  box-shadow: 0 10px 30px rgba(255,138,76,.42), 0 2px 8px rgba(0,0,0,.3);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  z-index: 80;
+  cursor: pointer;
+  transition: transform .18s ease, box-shadow .18s ease;
+}
+.fab-incant:active { transform: scale(0.94); }
+.fab-incant svg { width: 22px; height: 22px; }
+
 /* ── Responsive ─────────────────────────────────────────────── */
-@media (max-width: 880px) {
-  .topbar { grid-template-columns: auto 1fr auto; padding: 12px 16px; }
+@media (max-width: 960px) {
+  .topbar { grid-template-columns: auto 1fr auto; padding: 10px 12px; gap: 10px; }
   .brand { display: none; }
-  .tool-rail { display: none; }
-  .topbar-center { max-width: 220px; }
-  .detail-card { right: 12px; left: 12px; width: auto; }
-  .activity-feed { right: 12px; left: 12px; width: auto; }
+  .topbar-center { max-width: none; }
+  .incantation { padding: 8px 12px; font-size: 13px; }
+  .incantation kbd { display: none; }
+  /* Tool rail becomes a horizontally scrollable strip — no more hidden toolbar */
+  .tool-rail {
+    max-width: 44vw;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+    scroll-snap-type: x proximity;
+    -webkit-overflow-scrolling: touch;
+    padding: 2px;
+    gap: 4px;
+  }
+  .tool-rail::-webkit-scrollbar { display: none; }
+  .tool-rail .tool { flex: 0 0 auto; scroll-snap-align: start; }
+  .tool-rail .tool span { display: none; }
+}
+
+@media (max-width: 720px) {
+  .topbar { padding: 8px 10px; gap: 8px; }
+  .topbar-left { gap: 8px; }
+  .hex-logo svg { width: 24px; height: 28px; }
+  .pulse-status { padding: 4px 8px; font-size: 11px; }
+  .pulse-status #pulse-count { font-size: 12px; }
+
+  /* Hive toolbar — filter chips scroll, search goes below */
+  .hive-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+    padding: 10px 12px;
+  }
+  .filter-ring {
+    overflow-x: auto;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+    flex-wrap: nowrap;
+    gap: 6px;
+    padding-bottom: 2px;
+  }
+  .filter-ring::-webkit-scrollbar { display: none; }
+  .ring-chip { flex: 0 0 auto; padding: 6px 12px; font-size: 12px; }
+  .hive-search { width: 100%; }
+  .hive-search input { width: 100%; }
+  .hive-search kbd { display: none; }
+
+  /* Hive SVG — scale down gracefully via logical viewBox */
+  .hive-map { width: 100%; height: 100%; }
+
+  /* Pulse core shrinks */
+  .pulse-core { width: 180px; height: 180px; }
+  .pulse-core-stats { font-size: 10px; }
+
+  /* Grid — single column with tighter cards */
+  .grid-toolbar { padding: 10px 12px; flex-direction: column; gap: 8px; align-items: stretch; }
+  .search-bar { width: 100%; }
+  .search-bar input { width: 100%; }
+  .grid-container {
+    grid-template-columns: 1fr;
+    padding: 12px;
+    gap: 10px;
+  }
+  .grid-card { padding: 14px; }
+
+  /* List — hide less-important columns */
+  .list-table th:nth-child(3),
+  .list-table td:nth-child(3),
+  .list-table th:nth-child(5),
+  .list-table td:nth-child(5) { display: none; }
+  .list-table { font-size: 12px; }
+
+  /* Detail card — bottom sheet */
+  .detail-card {
+    top: auto;
+    right: 0; left: 0; bottom: 0;
+    width: auto;
+    max-height: 72vh;
+    border-radius: 18px 18px 0 0;
+    padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+    overflow-y: auto;
+    animation: sheetUp .26s cubic-bezier(.2,.9,.3,1.1);
+  }
+  @keyframes sheetUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
+  .detail-actions { flex-wrap: wrap; gap: 6px; }
+  .detail-actions .btn { flex: 1 1 45%; font-size: 12px; padding: 8px 10px; }
+
+  /* Activity feed — full-width bottom sheet */
+  .activity-feed {
+    top: auto;
+    right: 0; left: 0; bottom: 0;
+    width: auto;
+    max-height: 60vh;
+    border-radius: 18px 18px 0 0;
+  }
+
+  /* Overlays — full-bleed on mobile */
+  .overlay .panel,
+  .overlay .panel-wide,
+  .overlay .panel-full {
+    width: 100vw !important;
+    max-width: 100vw !important;
+    height: 100vh !important;
+    max-height: 100vh !important;
+    border-radius: 0;
+    margin: 0;
+  }
+  .panel-head { padding: 12px; }
+  .panel-title { font-size: 16px; }
+  .panel-sub { font-size: 11px; }
+  .inspector-body,
+  .swarm-body,
+  .settings-body { padding: 12px; gap: 10px; }
+  .inspector-body { flex-direction: column; }
+  .insp-list {
+    width: 100%;
+    max-height: 32vh;
+    border-right: none;
+    border-bottom: 1px solid var(--surface-2);
+  }
+  .insp-main { width: 100%; }
+  .inspector-tabs { overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
+  .inspector-tabs::-webkit-scrollbar { display: none; }
+  .insp-tab { flex: 0 0 auto; }
+
+  /* Incantation overlay — full width */
+  .incantation-overlay { padding: 8px; align-items: flex-start; padding-top: 8vh; }
+  .incantation-box { width: 100%; max-width: 100%; }
+  .incantation-input { font-size: 16px; } /* 16px prevents iOS zoom */
+  .incantation-footer { flex-wrap: wrap; gap: 6px; font-size: 11px; }
+
+  /* Session tabs — horizontal scroll */
+  .session-tabs {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    flex-wrap: nowrap;
+    padding: 6px 10px;
+    bottom: calc(0px + env(safe-area-inset-bottom, 0px));
+  }
+  .session-tabs::-webkit-scrollbar { display: none; }
+  .session-tab { flex: 0 0 auto; max-width: 70vw; }
+
+  /* Time river — compact */
+  .time-river {
+    left: 0; right: 0; bottom: 0;
+    width: 100%;
+    height: 160px;
+    border-radius: 14px 14px 0 0;
+  }
+
+  /* Terminal — tighter chrome */
+  .term-topbar { flex-wrap: wrap; padding: 8px 10px; gap: 6px; }
+  .breadcrumbs { font-size: 12px; flex-wrap: wrap; }
+  .term-actions { flex-wrap: wrap; gap: 4px; }
+  .term-btn { padding: 6px 8px; }
+  .term-btn.danger { padding: 6px 10px; }
+
+  /* Inputs — iOS zoom prevention on focus */
+  input[type="text"], input[type="search"], textarea, select {
+    font-size: 16px;
+  }
+
+  /* Show the FAB on small screens */
+  .fab-incant { display: flex; }
+  /* Hide the top-bar incantation on mobile — FAB takes over */
+  .topbar-center { display: none; }
+  .topbar { grid-template-columns: auto 1fr auto; }
+
+  /* Swarm dispatch — stack targets */
+  .swarm-target-row { flex-direction: column; align-items: stretch; }
+  .swarm-targets { flex-wrap: wrap; gap: 6px; }
+
+  /* Focus HUD — compact */
+  .focus-crown { font-size: 12px; gap: 6px; }
+
+  /* Toasts — full width, smaller */
+  .toast-container { left: 12px; right: 12px; bottom: 80px; }
+  .toast { width: 100%; font-size: 13px; }
+
+  /* Shortcuts — hide on mobile (no keyboard) */
+  #shortcuts-overlay .shortcut-grid { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 480px) {
+  .topbar { padding: 6px 8px; }
+  .tool-rail { max-width: 38vw; }
+  .grid-container { padding: 8px; }
+  .panel-head { padding: 10px; }
+  .detail-head { padding: 12px; gap: 10px; }
+  .detail-name { font-size: 17px; }
+  .detail-role { font-size: 11px; }
+  /* Keep pulse core from dominating small screens */
+  .pulse-core { width: 140px; height: 140px; opacity: .65; }
+}
+
+/* Coarse pointer (touch) tweaks — hit targets */
+@media (pointer: coarse) {
+  .tool, .icon-x, .icon-btn, .term-btn { min-width: 40px; min-height: 40px; }
+  .ring-chip, .insp-tab, .btn { min-height: 40px; }
+  .hive-cell { cursor: pointer; }
+  /* Disable hover-aura on touch — causes ghosting */
+  .cell-glow { transition: none; }
+}
+
+/* Landscape phones — keep overlays usable */
+@media (max-width: 900px) and (orientation: landscape) and (max-height: 480px) {
+  .detail-card { max-height: 86vh; }
+  .pulse-core { display: none; }
+  .time-river { height: 120px; }
 }
