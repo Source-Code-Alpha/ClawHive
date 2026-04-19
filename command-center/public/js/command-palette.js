@@ -1,8 +1,8 @@
 /* ═══════════════════════════════════════════════════════════════════
  * THE HIVE — 🔟 Incantation Bar
  * Natural-language intent parser for the Hive. Replaces a flat command
- * palette with a sentence-aware caster: "tell atlas to research homelab
- * costs" loads the right agent + topic and opens with your opening
+ * palette with a sentence-aware caster: "tell researcher to dig into
+ * this topic" loads the right agent + topic and opens with your opening
  * message. Falls back to fuzzy list navigation.
  * ═══════════════════════════════════════════════════════════════════ */
 (function() {
@@ -144,7 +144,7 @@
     });
 
     if (entries.length === 0) {
-      entries.push({ kind: 'hint', label: '<em>Try: <code>tell atlas to research homelab</code>, <code>@pixel</code>, <code>swarm summarize today</code></em>', action: ()=>{} });
+      entries.push({ kind: 'hint', label: '<em>Try: <code>tell researcher to dig into X</code>, <code>@coding</code>, <code>swarm summarize today</code></em>', action: ()=>{} });
     }
     selected = 0;
     paint();

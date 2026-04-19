@@ -55,12 +55,12 @@ export function agentHeader(emoji: string, name: string): string {
   return `**${emoji} ${name}**\n`;
 }
 
-// Convert agent_id to channel name: soha_coding -> soha-coding
+// Convert agent_id to channel name: example_agent -> example-agent
 export function agentIdToChannelName(agentId: string): string {
   return agentId.toLowerCase().replace(/_/g, "-");
 }
 
-// Convert channel name back to agent ID: soha-coding -> soha_coding
+// Convert channel name back to agent ID: example-agent -> example_agent
 export function channelNameToAgentId(channelName: string): string {
   return channelName.toLowerCase().replace(/-/g, "_");
 }

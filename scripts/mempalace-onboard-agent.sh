@@ -1,14 +1,14 @@
 #!/bin/bash
 # mempalace-onboard-agent.sh — mine an agent's memory into a MemPalace and register MCP server
 # Usage: bash scripts/mempalace-onboard-agent.sh <agent_id>
-# Example: bash scripts/mempalace-onboard-agent.sh atlas
+# Example: bash scripts/mempalace-onboard-agent.sh researcher
 
 set -e
 AGENT_ID="$1"
 
 if [ -z "$AGENT_ID" ]; then
   echo "Usage: $0 <agent_id>"
-  echo "Example: $0 atlas"
+  echo "Example: $0 researcher"
   exit 1
 fi
 

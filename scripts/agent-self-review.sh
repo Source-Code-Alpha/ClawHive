@@ -4,10 +4,10 @@
 # then proposes changes to its own identity files based on patterns it observes.
 #
 # Usage: bash scripts/agent-self-review.sh <agent_id>
-# Example: bash scripts/agent-self-review.sh soha_coding
+# Example: bash scripts/agent-self-review.sh coding
 #
 # Schedule weekly via cron, Discord slash command, or run manually:
-#   for agent in soha_coding atlas chimi_ops; do
+#   for agent in coding designer researcher; do
 #     bash scripts/agent-self-review.sh "$agent"
 #   done
 
