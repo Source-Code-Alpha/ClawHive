@@ -297,7 +297,7 @@ function renderHive() {
     const mood = moodOf(a);
     const r = 40;
     const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-    g.setAttribute('class', `hive-cell mood-${mood}`);
+    g.setAttribute('class', `cell mood-${mood}`);
     g.setAttribute('data-agent', a.id);
     g.style.setProperty('--cell-color', color);
 
@@ -598,6 +598,8 @@ async function openDetail(id) {
   state.activeAgent = a; selectedAgentId = id; window.selectedAgentId = id;
   const card = $('#detail-card');
   card.hidden = false;
+  // Next frame so the transition from translateX(440px) → 0 actually animates in
+  requestAnimationFrame(() => card.classList.add('open'));
   card.style.setProperty('--cell-color', a.color || '#ffb347');
   $('#detail-emoji').textContent = a.emoji || '✦';
   $('#detail-name').textContent = a.name || a.id;
@@ -621,7 +623,13 @@ async function openDetail(id) {
 }
 window.openDetail = openDetail;
 
-function closeDetail() { $('#detail-card').hidden = true; state.activeAgent = null; setAura(null); }
+function closeDetail() {
+  const card = $('#detail-card');
+  card.classList.remove('open');
+  // Hide after slide-out completes (matches CSS .45s transition)
+  setTimeout(() => { card.hidden = true; }, 450);
+  state.activeAgent = null; setAura(null);
+}
 window.closeDetail = closeDetail;
 
 function detailInspect() { if (state.activeAgent) openInspector(state.activeAgent.id); }

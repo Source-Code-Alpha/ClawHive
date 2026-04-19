@@ -442,6 +442,10 @@ export class SessionManager {
 
       // Track recent tool name so we can collapse runs of identical tools (e.g. Read, Read, Read)
       let lastToolName: string | null = null;
+      // With --include-partial-messages, Claude CLI emits BOTH token-level stream deltas
+      // AND the final full assistant message. If we process both, every response is doubled.
+      // Track whether we saw any streaming text; if so, skip the final assistant text blocks.
+      let sawStreamDelta = false;
 
       const handleEvent = async (event: any) => {
         if (!event || typeof event !== "object") return;
@@ -452,6 +456,7 @@ export class SessionManager {
           if (inner.type === "content_block_delta" && inner.delta?.type === "text_delta") {
             const t = inner.delta.text;
             if (typeof t === "string" && t.length > 0) {
+              sawStreamDelta = true;
               textBuf += t;
               responseAccumulator += t;    // Layer 3+7: accumulate full response
               scheduleFlush();
@@ -480,13 +485,17 @@ export class SessionManager {
           return;
         }
 
-        // Non-streaming assistant messages (full content blocks at once)
+        // Non-streaming assistant messages (full content blocks at once).
+        // Only process text blocks here as a FALLBACK when no streaming deltas arrived.
+        // Otherwise every response would be duplicated (streamed once, then final once).
         if (event.type === "assistant" && event.message?.content) {
           for (const block of event.message.content) {
             if (block?.type === "text" && typeof block.text === "string") {
-              textBuf += block.text;
-              responseAccumulator += block.text;  // Layer 3+7
-              scheduleFlush();
+              if (!sawStreamDelta) {
+                textBuf += block.text;
+                responseAccumulator += block.text;  // Layer 3+7
+                scheduleFlush();
+              }
             } else if (block?.type === "tool_use") {
               await flush();
               const toolName = block.name || "tool";
